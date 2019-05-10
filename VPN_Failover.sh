@@ -1,7 +1,7 @@
 #!/bin/sh
 # shellcheck disable=SC2086,SC2068,SC2039,SC2242,SC2027,SC2155,SC2046
-VER="v1.14"
-#======================================================================================================= © 2016-2019 Martineau, v1.14
+VER="v1.15"
+#======================================================================================================= © 2016-2019 Martineau, v1.15
 #
 # Check every 30 secs, and switch to alternate VPN Client if current VPN Client is DOWN, or expected cURL data transfer is 'SLOW'
 #
@@ -886,7 +886,7 @@ while true; do
         echo -e ${cBRED}$ALARMBELL"\t\tTerminating VPN Client" $VPN_ID
 
         # Prevent vpnclientX-route-pre-down from terminating this script
-        echo "NOKILL" >$KILLFILE                                    # v1.14
+        echo "NOKILL" >$LOCKFILE                                 # v1.15
         RC=$(service stop_vpnclient${VPN_ID})
 
         Check_VPNState $VPN_ID $IS_VPN_DOWN
@@ -961,7 +961,7 @@ while true; do
   else
     SayT "VPN Client Monitor: VPN Client" $VPN_ID "status OK"
     echo -e $cBGRE"\t\tVPN Client" $VPN_ID "connection status OK"
-    echo $$ >$KILLFILE                                        # v1.14 Allow vpnclientX-route-pre-down to terminate this script
+    echo $$ >$LOCKFILE                          # v1.15 Allow vpnclientX-route-pre-down to terminate this script by PID
     if [ -n "$ONCE" ]; then # v1.11.1
       SayT "VPN Client Monitor: Monitoring VPN Client" $VPN_ID "terminated"
       echo -e $cBYEL"\n\t"$(date +"%H:%M:%S")" $VER VPN Client Monitor: Monitoring VPN Client" $VPN_ID "terminated\n"
