@@ -1,12 +1,12 @@
 #!/bin/sh
 # shellcheck disable=SC2086,SC2068,SC2039,SC2242,SC2027,SC2155,SC2046
-VER="v1.15"
-#======================================================================================================= © 2016-2019 Martineau, v1.15
+VER="v1.16"
+#======================================================================================================= © 2016-2019 Martineau, v1.16
 #
 # Check every 30 secs, and switch to alternate VPN Client if current VPN Client is DOWN, or expected cURL data transfer is 'SLOW'
 #
 #          VPN_Failover   [-h|--help] | {vpn_instance to monitor} [ignore='csv_vpn_clients] [interval='seconds'] [timeout='seconds']] [force[big | small]
-#                         [curlrate='number'] [minrates='csv_rates'] [verbose=y] [delay='seconds'] [noswitch[='hhmm-hhmm'[,...]]] [silent] [multiconfig] [once]
+#                         [curlrate='number'] [minrates='csv_rates'] [verbose] [delay='seconds'] [noswitch[='hhmm-hhmm'[,...]]] [silent] [multiconfig] [once] [pingonly=ping_target]
 #
 #          VPN_Failover   1
 #                         Monitor VPN Client 1 every 30 secs and if DOWN switch to VPN Client 2 and then monitor VPN Client 2
@@ -21,14 +21,17 @@ VER="v1.15"
 #          VPN_Failover   5 timeout=45
 #                         Monitor VPN Client 5 every 30 secs and if DOWN switch to VPN Client 1 and allow max 45 secs for Client 1 to start
 #                         then monitor VPN Client 1
+#          VPN_Failover   4 pingonly=10.99.8.1
+#                         Client 4's OpenVPN Server, may have 'LANONLY', so a cURL to retrieve the VPN exit-IP will not work, so instead
+#                         force the test to use only PING. (NOTE: The ping target will normally be the (nvram get lan_ipaddr))
 #          VPN_Failover   3 force curlrate=1M
 #                         If the 12MB cURL transfer rate is <1048576 Bytes per second, then treat this as VPN Client 3 'DOWN'
 #                         (This cURL rate is not applicable to other VPN Clients if a switch occurs)
-#          VPN_Failover   3 force curlrate=1M verbose=y
+#          VPN_Failover   3 force curlrate=1M verbose
 #                         As previous example, but additional cURL transfer statistics/progress messages are shown on the console. (Useful to determine appropriate 'minrates=')
-#          VPN_Failover   3 forcesmall curlrate=1000 verbose=y noswitch=08:59-17:00
+#          VPN_Failover   3 forcesmall curlrate=1000 verbose noswitch=08:59-17:00
 #                         If the 433Byte cURL transfer rate is <1000 Bytes per second, no (disruptive) VPN Switch is performed during 'office' hours 9-5
-#          VPN_Failover   3 forcesmall curlrate=1000 verbose=y noswitch
+#          VPN_Failover   3 forcesmall curlrate=1000 verbose noswitch
 #                         If the 433Byte cURL transfer rate is <1000 Bytes per second, no (disruptive) VPN Switch is performed at ANY time.
 #                         (If VPN Client 3 is DOWN; the 'noswitch' directive is temporarily ignored to ensure the next round-robin VPN Client is started and found to be UP)
 #          VPN_Failover   1 force curlrate=900K minrates=?,500k,123456
@@ -47,30 +50,28 @@ VER="v1.15"
 # Script may be initiated by openvpn-event vpnclientX-up/vpnclientX-route-pre-up ONLY if one VPN Client is ACTIVE at any given time!!!!
 #
 #       VPN_ID=${dev:4:1}
-#       /jffs/scripts/VPN_Failover.sh "$VPN_ID" "delay=60" &
+#       logger -st "($(basename $0))" $$ "Requesting VPN Failover monitor with 2 min delay....."
+#       /jffs/scripts/VPN_Failover.sh "$VPN_ID" "delay=120" "interval=60" &
 #
 # and subsequently needs to be terminated by openvpn-event vpnclientX-route-pre-down (unless the termination is requested by this script)
-#       MYROUTER=$(nvram get computer_name)
-#       if [ -d "/tmp/mnt/"$MYROUTER ]; then
-#          MOUNT="/tmp/mnt/"$MYROUTER
-#       else
-#          MOUNT="/tmp"
+#
+#       VPN_ID=${dev:4:1}
+#       VPNFAILOVER="/tmp/vpnclient"$VPN_ID"-VPNFailover"
+#       # Also rely on the VPN_Failover.sh to test for the existence of the VPNFailover semaphore BEFORE it attempts a restart!
+#       if [ -z "$(grep "NOKILL" $VPNFAILOVER)" ];then
+#           PID=$(cat $VPNFAILOVER)
+#           [ "$PID" != "NOKILL" ] && kill $PID
+#           rm $VPNFAILOVER
+#           logger -st "($(basename $0))" $$ "VPN Failover Monitor self-destruct requested....." $VPNFAILOVER "RC="$?  # RC=1 means file was already deleted
 #       fi
-#       LOCKFILE=$MOUNT"/vpnclient"$VPN_ID"-monitor"
-#       if [ -z "$(grep "NOKILL" $LOCKFILE)" ];then
-#          PID=$(cat $LOCKFILE)
-#          [ "$PID" != "NOKILL" ] && kill $PID
-#          rm $LOCKFILE
-#          logger -st "($(basename $0))" $$ "VPN Failover Monitor self-destruct requested....." $LOCKFILE "RC="$?
-#       fi
-
+#
 #
 # A Primary (VPN1) / Failover (VPN2) between ONLY VPN1 and VPN2 can be requested as follows (assuming VPN Clients 3,4 and 5 are NOT configured)
 #           e.g.
-#           Use 'sh /jffs/scripts/VPN_Failover.sh 2 &'
+#           Use 'sh /jffs/scripts/VPN_Failover.sh "2" &'
 #   but if VPN Clients 3,4 and 5 are configured, you need to EXPLICITLY exclude VPN Clients 3,4 and 5 from being included in the round-robin
 #           e.g.
-#           Use 'sh /jffs/scripts/VPN_Failover.sh 2 ignore=3,4,5 &'
+#           Use 'sh /jffs/scripts/VPN_Failover.sh "2" "ignore=3,4,5" &'
 #
 
 # Print between line beginning with'#==' to first blank line inclusive
@@ -483,13 +484,14 @@ Update_VPN_Client() { # v1.10
     echo $USE_INDEX
   fi
 }
+
 #=============================================Main=============================================================
 # shellcheck disable=SC2068
 Main() { true; } # Syntax that is Atom Shellchecker compatible!
 
 ANSIColours
 # shellcheck disable=SC2068
-SayT $VER "" $@
+SayT $VER "Started....." [$@]
 
 # Assistance required ?
 if [ "$1" == "help" ] || [ "$1" == "-h" ]; then # Show help
@@ -501,11 +503,7 @@ fi
 
 MYROUTER=$(nvram get computer_name)
 
-if [ -d "/tmp/mnt/"$MYROUTER ]; then
-  MOUNT="/tmp/mnt/"$MYROUTER
-else
-  MOUNT="/tmp"
-fi
+MOUNT="/tmp"
 
 METHOD=
 IS_VPN_DOWN=0
@@ -515,12 +513,13 @@ ALARMBELL="\a"          # Console Audible ERRORS may be suppressed by using 'sil
 BLOCKEDPERIOD=0         # Apply restricted time periods
 BLOCKED_PERIODS=        # Time window(s) when a VPN switch is NOT allowed e.g. 08:59-13:00,12:59-23:00
 NOSWITCH=0              # 1-Allow VPN Client switching
-VERBOSE=                # 'verbose=y' will generate additional cURL messages to console/Syslog
+VERBOSE=                # 'verbose' will generate additional cURL messages to console/Syslog
 IGNORE_VPN=             # List of VPN Clients to ignore in round-robin
 TIMEOUT=60              # Default VPN client start-up
 INTERVAL=30             # Default interval cycle to check if VPN Client needs to be round-robin'd
 VPN_ID=                 # Default VPN Client to Check
 MULTI_VPNCONFIG_INDEX=0 # Used to track MULTI VPN config round-robin
+TRIES=3                 # 'pingonly=' try count                                         # v1.16
 
 FORCE_WGET=
 FORCE_WGET_500B="http://proof.ovh.net/files/md5sum.txt"
@@ -555,6 +554,27 @@ else
   exit 99
 fi
 
+VPNFAILOVER="/tmp/vpnclient"$VPN_ID"-VPNFailover"
+#set -x
+#(
+# Is there ALREADY a VPN Failover monitor process for this VPN?
+SNAME=$(basename $0)
+DUPS=$(ps -w | grep -v grep | grep "{" | grep -F "VPN_Failover.sh " | grep -v $$)
+#Say "***DEBUG DUPS="$DUPS
+DUPCNT=$(echo "$DUPS" | grep -c "{"$SNAME"}" )
+#Say "***DEBUG DUPCNT="$DUPCNT
+if [ $DUPCNT -lt 2 ];then
+    echo $$ >$VPNFAILOVER
+else
+    echo -e $cBRED"\a\n\t"
+    #Say "***DEBUG VPN Client $VPN_ID Failover monitor CNT=$DUPCNT already running ==>" $DUPS
+    Say "VPN Client $VPN_ID Failover monitor Status/PID="$(cat $VPNFAILOVER) "already running CNT="$CNT "==>" $DUPS
+    echo -e $cRESET
+    exit 1
+fi
+#) 2>&1 | logger -t $(basename $0)"[$$_***DEBUG]"
+
+
 DEV="tun1"$VPN_ID
 
 shift
@@ -564,7 +584,6 @@ while [ $# -gt 0 ]; do # Until you run out of parameters . . .
 
     delay=*) # Allow the asyncronous call from openvpn-event vpnclientX-up to ensure that the VPN Client has fully initialised
       DELAY="$(echo "$1" | sed -n "s/^.*delay=//p")" # v1.08
-      sleep $DELAY
       CMDDELAY=$DELAY
       ;;
 
@@ -596,7 +615,7 @@ while [ $# -gt 0 ]; do # Until you run out of parameters . . .
       CMDMINRATES=$VPN_CLIENT_RATES
       ;;
 
-    verbose=*)
+    verbose)
       VERBOSE="verbose" # Enable additional messages such as actual cURL transfer progress
       CMDVERBOSE=$VERBOSE
       ;;
@@ -610,7 +629,7 @@ while [ $# -gt 0 ]; do # Until you run out of parameters . . .
         exit 996
       fi
       CMDIGNORE=$IGNORE_VPN
-      SayT $CMDIGNORE
+      #SayT "***DEBUG ignore="$CMDIGNORE
       ;;
 
     timeout=*)
@@ -741,6 +760,12 @@ while [ $# -gt 0 ]; do # Until you run out of parameters . . .
       ONCE="once" # v1.11
       SayT $CMDONCE
       ;;
+      
+    pingonly=*)
+      PING_LIST="$(echo "$1" | sed -n "s/^.*pingonly=//p" | awk '{print $1}')"
+      METHOD=" using PING to Point-to-Point LAN only"
+      CMDPINGONLY=$1
+      ;;
     *)
       echo -e ${cBRED}$ALARMBELL"\n\t***ERROR unrecognised directive '"$1"'\n"$cRESET
       exit 99
@@ -750,6 +775,20 @@ while [ $# -gt 0 ]; do # Until you run out of parameters . . .
   shift
 
 done
+
+if [ -n "$CMDDELAY" ];then
+	SayT $VER "Beginning VPN Client" $VPN_ID "connection status monitoring in" $DELAY "secs.....@"$(date -D '%s' -d "$(($(date +%s) + $DELAY))" +"%H:%M:%S")
+	sleep $DELAY
+	
+	# Check for external kill switch
+    if [ ! -f $VPNFAILOVER ]; then
+       Say $VER "VPN Client Monitor: Monitoring VPN Client" $VPN_ID "terminated ('"$VPNFAILOVER"' not found)"
+       #echo -e $cBYEL"\t\t"$(date +"%H:%M:%S")" Monitoring VPN Client" $VPN_ID "terminated ('"$VPNFAILOVER"' not found)\n"$cRESET
+       echo -e $cRESET
+	   exit 0
+    fi
+	
+fi
 
 # If SMDFORCE then CMDCURLRATE or CMDMINRATES MUST have been specified.
 if [ -n "$CMDFORCE" ]; then
@@ -774,11 +813,15 @@ fi
 while true; do
 
   TRACKFILE="${MOUNT}/vpnclient$VPN_ID"
-  LOCKFILE=$TRACKFILE"-monitor"
-
-  echo $$ >$LOCKFILE
-
-  #SayT "VPN Client Monitor: Starting.....(using '"$LOCKFILE"')"
+  
+	# Check for external kill switch
+    if [ ! -f $VPNFAILOVER ]; then
+       Say $VER "VPN Client Monitor: Monitoring VPN Client" $VPN_ID "terminated ('"$VPNFAILOVER"' not found)"
+       #echo -e $cBYEL"\t\t"$(date +"%H:%M:%S")" Monitoring VPN Client" $VPN_ID "terminated ('"$VPNFAILOVER"' not found)\n"$cRESET
+       break
+    fi
+  
+  #SayT "VPN Client Monitor: Starting.....(using '"$VPNFAILOVER"')"
   #echo -e $cBYEL"\n\t$VER VPN Client Monitor: Starting.....\n"
   echo -e
 
@@ -806,16 +849,27 @@ while true; do
   esac
 
   if [ $FORCE_WGET_MIN_RATE -eq 0 ]; then
-    METHOD= # If no cURL rate threshold then clear the header message
+    METHOD=                             # If no cURL rate threshold then clear the header message
   else
     METHOD=" using MINIMIUM acceptable cURL transfer rate ("$FORCE_WGET_MIN_RATE" Bytes/sec)"
   fi
 
   SayT "VPN Client Monitor: Checking VPN Client" $VPN_ID "connection status...." $METHOD
+  
   echo -e $cBYEL"\t"$(date +"%H:%M:%S") $VER "VPN Client Monitor: Checking VPN Client" $VPN_ID "connection status...." $METHOD "\n"
-
+	# Check for external kill switch
+    if [ ! -f $VPNFAILOVER ]; then
+       Say $VER "VPN Client Monitor: Monitoring VPN Client" $VPN_ID "terminated ('"$VPNFAILOVER"' not found)"
+       #echo -e $cBYEL"\t\t"$(date +"%H:%M:%S")" Monitoring VPN Client" $VPN_ID "terminated ('"$VPNFAILOVER"' not found)\n"$cRESET
+       break
+    fi
+  
   # Check if VPN isn't UP or performance is unacceptably 'SLOW'
-  PERFORMANCE=$(Check_VPN "CURL" "$FORCE_WGET" "$VPN_ID" "quiet") # v1.08
+  if [ -z "$PING_LIST" ];then                                                    # v1.16
+    PERFORMANCE=$(Check_VPN "CURL" "$FORCE_WGET" "$VPN_ID" "quiet")         # v1.08
+  else
+    PERFORMANCE=$(Check_VPN "$PING_LIST" "$FORCE_WGET" "$VPN_ID" "quiet")  # v1.16
+  fi
 
   if [ "$(nvram get "vpn_client"${VPN_ID}"_state")" != "$IS_VPN_UP" ] || [ "$PERFORMANCE" == "FAIL" ]; then
     case "$VPN_ID" in
@@ -886,7 +940,7 @@ while true; do
         echo -e ${cBRED}$ALARMBELL"\t\tTerminating VPN Client" $VPN_ID
 
         # Prevent vpnclientX-route-pre-down from terminating this script
-        echo "NOKILL" >$LOCKFILE                                 # v1.15
+        echo "NOKILL" >$VPNFAILOVER                       # v1.15
         RC=$(service stop_vpnclient${VPN_ID})
 
         Check_VPNState $VPN_ID $IS_VPN_DOWN
@@ -945,6 +999,18 @@ while true; do
             #exit 99
             continue
           else
+            # Check for external kill switch
+           if [ ! -f $VPNFAILOVER ]; then
+              Say $VER "VPN Client Monitor: Monitoring VPN Client" $VPN_ID "terminated ('"$VPNFAILOVER"' not found)"
+              #echo -e $cBYEL"\t\t"$(date +"%H:%M:%S")" Monitoring VPN Client" $VPN_ID "terminated ('"$VPNFAILOVER"' not found)\n"$cRESET
+              break
+           fi
+          
+			if [ -f "$VPNFAILOVER" ];then
+				echo $$ >$VPNFAILOVER
+			fi
+			
+			
             NEXTVPN= # Reset the override i.e. 'noswitch' will now be honoured!
           fi
         else
@@ -959,27 +1025,39 @@ while true; do
       DEV="tun1"$VPN_ID
     fi
   else
-    SayT "VPN Client Monitor: VPN Client" $VPN_ID "status OK"
+    SayT $VER "VPN Client Monitor: VPN Client" $VPN_ID "status OK"
     echo -e $cBGRE"\t\tVPN Client" $VPN_ID "connection status OK"
-    echo $$ >$LOCKFILE                          # v1.15 Allow vpnclientX-route-pre-down to terminate this script by PID
+
+    if [ -f "$VPNFAILOVER" ]; then
+        echo $$ >$VPNFAILOVER                          # v1.15 Allow vpnclientX-route-pre-down to terminate this script by PID
+    fi
+    
     if [ -n "$ONCE" ]; then # v1.11.1
-      SayT "VPN Client Monitor: Monitoring VPN Client" $VPN_ID "terminated"
+      SayT $VER "VPN Client Monitor: Monitoring VPN Client" $VPN_ID "terminated"
       echo -e $cBYEL"\n\t"$(date +"%H:%M:%S")" $VER VPN Client Monitor: Monitoring VPN Client" $VPN_ID "terminated\n"
       exit 0
     fi
   fi
+ 
+  	# Check for external kill switch
+    if [ ! -f $VPNFAILOVER ]; then
+       Say $VER "VPN Client Monitor: Monitoring VPN Client" $VPN_ID "terminated ('"$VPNFAILOVER"' not found)"
+       #echo -e $cBYEL"\t\t"$(date +"%H:%M:%S")" Monitoring VPN Client" $VPN_ID "terminated ('"$VPNFAILOVER"' not found)\n"$cRESET
+       break
+    fi
 
   if [ -z "$VPN_NO_SLEEP" ]; then # v1.07
     echo -e $cBYEL"\n\t\tWill check VPN Client" $VPN_ID "connection status again in" $INTERVAL "secs.....@"$(date -D '%s' -d "$(($(date +%s) + $INTERVAL))" +"%H:%M:%S") # v1.08
-    sleep $INTERVAL
+    SayT $VER "Will check VPN Client" $VPN_ID "connection status again in" $INTERVAL "secs.....@"$(date -D '%s' -d "$(($(date +%s) + $INTERVAL))" +"%H:%M:%S")
+	sleep $INTERVAL
   else
     VPN_NO_SLEEP=
   fi
 
   # Check for external kill switch
-  if [ ! -f $LOCKFILE ]; then
-    SayT "VPN Client Monitor: Monitoring VPN Client" $VPN_ID "terminated ('"$LOCKFILE"' not found)"
-    echo -e $cBYEL"\t\t"$(date +"%H:%M:%S")" Monitoring VPN Client" $VPN_ID "terminated ('"$LOCKFILE"' not found)\n"$cRESET
+  if [ ! -f $VPNFAILOVER ]; then
+    SayT $VER "VPN Client Monitor: Monitoring VPN Client" $VPN_ID "terminated ('"$VPNFAILOVER"' not found)"
+    echo -e $cBYEL"\t\t"$(date +"%H:%M:%S")" Monitoring VPN Client" $VPN_ID "terminated ('"$VPNFAILOVER"' not found)\n"$cRESET
     break
   fi
 
