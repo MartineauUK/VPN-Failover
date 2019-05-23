@@ -559,11 +559,11 @@ VPNFAILOVER="/tmp/vpnclient"$VPN_ID"-VPNFailover"
 #(
 # Is there ALREADY a VPN Failover monitor process for this VPN?
 SNAME=$(basename $0)
-DUPS=$(ps -w | grep -v grep | grep "{" | grep -F "VPN_Failover.sh " | grep -v $$)
+DUPS=$(ps -w | grep -v grep | grep "{" | grep -F "VPN_Failover.sh ${VPN_ID}" | grep -v $$)
 #Say "***DEBUG DUPS="$DUPS
 DUPCNT=$(echo "$DUPS" | grep -c "{"$SNAME"}" )
 #Say "***DEBUG DUPCNT="$DUPCNT
-if [ $DUPCNT -lt 2 ];then
+if [ $DUPCNT -le 1 ];then
     echo $$ >$VPNFAILOVER
 else
     echo -e $cBRED"\a\n\t"
