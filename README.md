@@ -12,10 +12,10 @@ The script will attempt to use cURL to retrieve data via the VPN Client tunnel e
 
 The easiest method (to implement the script) to monitor a VPN Client connection is to simply use cru (cron) schedule(s)
 
-	e.g. Every 60 minutes @5 minutes past the hour, check the state os the VPN Client 1
+	e.g. Every 60 minutes @5 minutes past the hour, check the state of the VPN Client 1
 		cru "5 */1 * * *" /jffs/scripts/VPN_Failover.sh  1 once
 			
-However, using a static schedule, isn't very flexible, as suppose the VPN Client is legitimately DOWN, then unless the cru (cron) schedule isn't stopped, the VPN Client connection will be restored, which may be inappropriate.
+However, using a static schedule, isn't very flexible, as suppose the VPN Client is legitimately DOWN, then unless the cru (cron) schedule is stopped, the VPN Client connection will be restored, which may be inappropriate.
 
 A better solution is to only enable the monitoring when the VPN Client is manually started, and to cease monitoring when the VPN Client is manually terminated.
 This method will require the openvpn-event triggers vpnclientX-route-up/vpnclientX-up and vpnclientX-route-pre-down scripts to be implemented.
