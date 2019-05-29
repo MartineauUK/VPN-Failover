@@ -8,12 +8,12 @@ This script can monitor the connection status of a VPN Client interface, and if 
 		3. Start a different VPN Client configuration
 		4. Restart the same VPN Client instance with a different server/port/protocol*
 		
-The script will attempt to use cURL to retrieve data via the VPN Client tunnel except in the case of site-site VPN tunnel where the remote site has enabled 'LAN ONLY' in which you will need to specify the 'pingonly=' directive to use PING rather than cURL to determine the state of the connection.
+The script will attempt to use cURL to retrieve data via the VPN Client tunnel except in the case of site-site VPN tunnel where the remote site has enabled 'LAN ONLY' in which case you will need to specify the 'pingonly=' directive to use PING rather than cURL to determine the state of the connection.
 
 The easiest method (to implement the script) to monitor a VPN Client connection is to simply use cru (cron) schedule(s)
 
-	e.g. 	Every 60 minutes @5 minutes past the hour
-		cru "5 */1 * * *" /jffs/scripts/VPN_Failover.sh once
+	e.g. Every 60 minutes @5 minutes past the hour, check the state os the VPN Client 1
+		cru "5 */1 * * *" /jffs/scripts/VPN_Failover.sh  1 once
 			
 However, using a static schedule, isn't very flexible, as suppose the VPN Client is legitimately DOWN, then unless the cru (cron) schedule isn't stopped, the VPN Client connection will be restored, which may be inappropriate.
 
