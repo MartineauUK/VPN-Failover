@@ -8,11 +8,12 @@ This script can monitor the connection status of a VPN Client interface, and if 
 		3. Start a different VPN Client configuration
 		4. Restart the same VPN Client instance with a different server/port/protocol*
 		
-The script will attempt to use cURL to retrieve data via the VPN Client tunnel except in the case of site-site VPN tunnel where the remote site has enabled 'LAN ONLY' in which case you will need to specify the 'pingonly=' directive to use PING rather than cURL to determine the state of the connection.
+The script will attempt to use cURL to retrieve data via the VPN Client tunnel except in the case of site-site VPN tunnel where the remote site has enabled 'LAN ONLY', in which case you will need to specify the 'pingonly=' directive to use PING rather than cURL to determine the state of the connection.
 
 The easiest method (to implement the script) to monitor a VPN Client connection is to simply use cru (cron) schedule(s)
 
-	e.g. Every 60 minutes @5 minutes past the hour, check the state of the VPN Client 1
+e.g. Every 60 minutes @5 minutes past the hour, check the state of the VPN Client 1
+
 		cru "5 */1 * * *" /jffs/scripts/VPN_Failover.sh  1 once
 			
 However, using a static schedule, isn't very flexible, as suppose the VPN Client is legitimately DOWN, then unless the cru (cron) schedule is stopped, the VPN Client connection will be restored, which may be inappropriate.
@@ -20,7 +21,7 @@ However, using a static schedule, isn't very flexible, as suppose the VPN Client
 A better solution is to only enable the monitoring when the VPN Client is manually started, and to cease monitoring when the VPN Client is manually terminated.
 This method will require the openvpn-event triggers vpnclientX-route-up/vpnclientX-up and vpnclientX-route-pre-down scripts to be implemented.
 
-e.g. Two minutes after VPN Client 1 is started, monitor the status of VPN Client 1, every 60 minutes
+e.g. 2 minutes after VPN Client 1 is started, monitor the status of VPN Client 1, every 60 minutes
 	
 		/jffs/scripts/vpnclient1-route-pre-up
 		
@@ -30,7 +31,7 @@ e.g. Two minutes after VPN Client 1 is started, monitor the status of VPN Client
 
 and subsequently needs to be terminated by openvpn-event vpnclientX-route-pre-down (unless the termination is requested by this script)
 
-		/jffs/scripts/vpnclientX-route-pre-down
+		/jffs/scripts/vpnclient1-route-pre-down
 		
 		VPN_ID=${dev:4:1}
 		VPNFAILOVER="/tmp/vpnclient"$VPN_ID"-VPNFailover"
@@ -42,9 +43,9 @@ and subsequently needs to be terminated by openvpn-event vpnclientX-route-pre-do
 			logger -st "($(basename $0))" $$ "VPN Failover Monitor self-destruct requested....." $VPNFAILOVER "RC="$?  # RC=1 means file was already deleted
 		fi
 
-OpenVPN is quite capable of monitoring its connection, and can restart with a different server/port/protocol by including the appropriate directives.
+OpenVPN is quite capable of monitoring its connection, and can automatically restart with a different server/port/protocol by including the appropriate directives.
 
-One unique feature of the script is its ability to measure the time taken for a file transfer to occur, and (if convenient) restart the connection
+One unique feature of the script is its ability to measure the time taken for a data transfer to occur, and (if convenient) restart the connection.
 
 	e.g. If the 433Byte cURL transfer rate is <1000 Bytes per second, no (disruptive) VPN Switch is performed during 'office' hours 9-5
 
