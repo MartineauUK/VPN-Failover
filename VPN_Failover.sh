@@ -137,18 +137,20 @@ EOF
 Check_VPN() {
 
   CNT=0
+  RC15=0                                # v1.18
+  RC=0                                  # v1.18
   STATUS="FAIL"
 
   local ARG1=$1
   local ARG2=$2
   local VPN_ID=$3                                                       # v1.18
 
-  if [ -n "$(echo "$IGNORE_VPN" | grep -oF "$3")" ]; then
+  if [ -n "$(echo "$IGNORE_VPN" | grep -oF "$VPN_ID")" ]; then
     echo "IGNORE" # VPN Client is excluded from round robin...so spoof 'OK' status
     return
   fi
 
-  local VPNADDR=$(Get_VPN_ADDR $3)
+  local VPNADDR=$(nvram get "vpn_client${VPN_ID}_addr")             # v1.18
   if [ -z "$VPNADDR" ]; then
     echo "NOTCONFIG" # VPN Client isn't configured...so spoof 'OK' status
     return
@@ -185,8 +187,8 @@ Check_VPN() {
     # NOTE: Site-to-Site private VPN tunnels do not return a Public IP
     IP=$(curl $CURL_INTERFACE --connect-timeout 5 -s "http://ipecho.net/plain") # Max 15 char retrieval
     RC15=$?
-    METHOD=" IP retrieval (${IP}) - cURL '"http://ipecho.net/plain"'"
-    [ "$VERBOSE" == "verbose" ] && Say "\t$METHOD rc="$RC15         # v1.18
+    METHOD=" using IP retrieval (${IP}) - cURL '"http://ipecho.net/plain"'"
+    [ "$VERBOSE" == "verbose" ] && Say "\t$METHOD rc15="$RC15         # v1.18
 
     if [ -n "$IP" ]; then
       STATUS="OK"
@@ -194,8 +196,8 @@ Check_VPN() {
       # Try "https://api.ipify.org" .....
       IP=$(curl $CURL_INTERFACE --connect-timeout 5 -s "https://api.ipify.org") # Max 15 char retrieval # v1.18
       RC15=$?
-      METHOD="using IP retrieval (${IP}) - cURL '"https://api.ipify.org"'"
-      [ "$VERBOSE" == "verbose" ] && Say "\t$METHOD rc="$RC15           # v1.18
+      METHOD=" using IP retrieval (${IP}) - cURL '"https://api.ipify.org"'"
+      [ "$VERBOSE" == "verbose" ] && Say "\t$METHOD rc15="$RC15           # v1.18
 
       # CURLE_COULDNT_CONNECT       (7)     tun1X isn't UP?
       # CURLE_OPERATION_TIMEDOUT    (28)
@@ -203,17 +205,20 @@ Check_VPN() {
       # CURLE_GOT_NOTHING           (52)    Empty reply from server
       # If we can't rely on either "http://ipecho.net/plain"/"https://api.ipify.org", try to PING the vpn_clientX_addr
       if [ -z "$IP" ];then
-          METHOD=" using PING 'vpn_client${VPN_ID}_addr (${VPN_ADDR})'"
-          ping $PING_INTERFACE -q -c 1 -W 2 $VPN_ADDR 2>/dev/null   # v1.18
+          METHOD=" using PING 'vpn_client${VPN_ID}_addr (${VPNADDR})'"
+          ping $PING_INTERFACE -q -c 1 -W 2 $VPNADDR 2>/dev/null   # v1.18
           local RC=$?
-          [ "$VERBOSE" == "verbose" ] && Say "\t$METHOD rc="$RC     # v1.18
+          [ "$VERBOSE" == "verbose" ] && Say "\t$METHOD rc="$RC         # v1.18
       fi
+      [ "$VERBOSE" == "verbose" ] && Say "\t Check_VPN(): Results; IP cURL rc15="$RC15" && PING rc="$RC        # v1.18
       if [ "$RC15" != "0" ] && [ "$RC" != "0" ]; then                   # v1.18
         STATUS="FAIL"
         echo $STATUS
+        [ "$VERBOSE" == "verbose" ] && Say "\t Check_VPN(): Return=$STATUS"
         return
       else
         STATUS="OK"                                                     # v1.18
+        [ "$VERBOSE" == "verbose" ] && Say "\t Check_VPN(): STATUS=$STATUS"
       fi
     fi
   fi
@@ -669,8 +674,8 @@ fi
 
 
 #For verbose debugging, uncomment the following two lines, and uncomment the last line of this script
-#set -x
-#(
+set -x
+(
 
 DEV="tun1"$VPN_ID
 
@@ -974,7 +979,7 @@ while true; do
 
   if [ "$(nvram get "vpn_client"${VPN_ID}"_state")" != "$IS_VPN_UP" ] || [ "$PERFORMANCE" == "FAIL" ]; then
     case "$VPN_ID" in
-      1) NEW_VPN_ID=2 ;; # VPN Client 1 is DOWN or 'slow'?; Switch to VPN Client 2;;
+      1) NEW_VPN_ID=2 ;; # VPN Client 1 is DOWN or 'slow'?; Switch to VPN Client 2
       2) NEW_VPN_ID=3 ;; # VPN Client 2 is DOWN or 'slow'?; Switch to VPN Client 3
       3) NEW_VPN_ID=4 ;; # VPN Client 3 is DOWN or 'slow'?; Switch to VPN Client 4
       4) NEW_VPN_ID=5 ;; # VPN Client 4 is DOWN or 'slow'?; Switch to VPN Client 5
@@ -986,12 +991,11 @@ while true; do
     case $VPNSTATE in
       0) REASON=$VPNSTATE";Disconnected" ;;
       1) REASON=$VPNSTATE";Connecting" ;;
-      2)
-        REASON=$VPNSTATE";Connected"
-        [ "$PERFORMANCE" == "SLOW" ] && REASON=$REASON" but SLOW!"          # v1.18
-        [ "$PERFORMANCE" == "FAIL" ] && REASON=$REASON" but tunnel DOWN"        # v1.18
-        ;;
-      "-1") REASON=$VPNSTATE";Unknown Error - Password/routing issue?" ;;
+      2) REASON=$VPNSTATE";Connected"
+         [ "$PERFORMANCE" == "SLOW" ] && REASON=$REASON" but SLOW!"          # v1.18
+         [ "$PERFORMANCE" == "FAIL" ] && REASON=$REASON" but tunnel DOWN"    # v1.18
+         ;;
+   "-1") REASON=$VPNSTATE";Unknown Error - Password/routing issue?" ;;
       *) REASON=$VPNSTATE";?" ;;
     esac
 
@@ -1175,4 +1179,4 @@ echo -e $cRESET
 
 exit 0
 
-#) 2>&1 | logger -t $(basename $0)"[$$_***DEBUG]"
+) 2>&1 | logger -t $(basename $0)"[$$_***DEBUG]"
