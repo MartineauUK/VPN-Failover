@@ -980,7 +980,7 @@ while true; do
     PERFORMANCE="$(Check_VPN "$PING_LIST" "$FORCE_WGET" "$VPN_ID")"  # v1.16 WTF!
   fi
 
-  if [ "$PERFORMANCE" != "OK" ]; then # Hack, as VARIABLE is NEVER a single word???!!! :-( - weird v1.18
+  if [ -z "$(echo "$PERFORMANCE" | grep -o "OK")" ]; then # Hack, as VARIABLE is NEVER a single word???!!! :-( - weird v1.18
     case "$VPN_ID" in
       1) NEW_VPN_ID=2 ;; # VPN Client 1 is DOWN or 'slow'?; Switch to VPN Client 2
       2) NEW_VPN_ID=3 ;; # VPN Client 2 is DOWN or 'slow'?; Switch to VPN Client 3
