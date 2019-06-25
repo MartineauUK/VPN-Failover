@@ -676,8 +676,8 @@ fi
 
 
 #For verbose debugging, uncomment the following two lines, and uncomment the last line of this script
-set -x
-(
+#set -x
+#(
 
 DEV="tun1"$VPN_ID
 
@@ -1182,4 +1182,4 @@ echo -e $cRESET
 
 exit 0
 
-) 2>&1 | logger -t $(basename $0)"[$$_***DEBUG]"
+#) 2>&1 | logger -t $(basename $0)"[$$_***DEBUG]"
