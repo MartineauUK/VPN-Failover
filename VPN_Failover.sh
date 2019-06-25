@@ -152,7 +152,9 @@ Check_VPN() {
 
   local VPNADDR=$(nvram get "vpn_client${VPN_ID}_addr")             # v1.18
   if [ -z "$VPNADDR" ]; then
-    echo "NOTCONFIG" # VPN Client isn't configured...so spoof 'OK' status
+    STATUS="NOTCONFIG"
+    [ "$VERBOSE" == "verbose" ] && Say "\t Check_VPN(): Return=$STATUS"
+    echo $STATUS # VPN Client isn't configured...so spoof 'OK' status
     return
   fi
 
@@ -971,13 +973,14 @@ while true; do
     fi
 
   # Check if VPN isn't UP or performance is unacceptably 'SLOW'
-  if [ -z "$PING_LIST" ];then                                                    # v1.16
-    PERFORMANCE=$(Check_VPN "CURL" "$FORCE_WGET" "$VPN_ID" "$VERBOSE")         # v1.08
+  PERFORMANCE=                                                       # v1.18 WTF!
+  if [ -z "$PING_LIST" ];then                                       # v1.16
+    PERFORMANCE="$(Check_VPN "CURL" "$FORCE_WGET" "$VPN_ID")"        # v1.08 WTF!
   else
-    PERFORMANCE=$(Check_VPN "$PING_LIST" "$FORCE_WGET" "$VPN_ID" "$VERBOSE")  # v1.16
+    PERFORMANCE="$(Check_VPN "$PING_LIST" "$FORCE_WGET" "$VPN_ID")"  # v1.16 WTF!
   fi
 
-  if [ "$(nvram get "vpn_client"${VPN_ID}"_state")" != "$IS_VPN_UP" ] || [ "$PERFORMANCE" == "FAIL" ]; then
+  if [ "$PERFORMANCE" != "OK" ]; then # Hack, as VARIABLE is NEVER a single word???!!! :-( - weird v1.18
     case "$VPN_ID" in
       1) NEW_VPN_ID=2 ;; # VPN Client 1 is DOWN or 'slow'?; Switch to VPN Client 2
       2) NEW_VPN_ID=3 ;; # VPN Client 2 is DOWN or 'slow'?; Switch to VPN Client 3
@@ -992,8 +995,8 @@ while true; do
       0) REASON=$VPNSTATE";Disconnected" ;;
       1) REASON=$VPNSTATE";Connecting" ;;
       2) REASON=$VPNSTATE";Connected"
-         [ "$PERFORMANCE" == "SLOW" ] && REASON=$REASON" but SLOW!"          # v1.18
-         [ "$PERFORMANCE" == "FAIL" ] && REASON=$REASON" but tunnel DOWN"    # v1.18
+         [ -n "$(echo "$PERFORMANCE" | grep -o "SLOW")" ] && { REASON=$REASON" but SLOW!"      ; PERFORMANCE="FAIL"; }     # Hack v1.18
+         [ -n "$(echo "$PERFORMANCE" | grep -o "FAIL")" ] && { REASON=$REASON" but tunnel DOWN"; PERFORMANCE="FAIL"; }     # Hack v1.18
          ;;
    "-1") REASON=$VPNSTATE";Unknown Error - Password/routing issue?" ;;
       *) REASON=$VPNSTATE";?" ;;
