@@ -1,20 +1,23 @@
 #!/bin/sh
 # shellcheck disable=SC2086,SC2068,SC2039,SC2242,SC2027,SC2155,SC2046
-VER="v1.18"
-#======================================================================================================= © 2016-2019 Martineau, v1.18
+VER="v1.20"
+#======================================================================================================= © 2016-2019 Martineau, v1.20
 #
 # Check every 30 secs, and switch to alternate VPN Client if current VPN Client is DOWN, or expected cURL data transfer is 'SLOW'
 #
 #          VPN_Failover   [-h | help | status ] |
 #                         {vpn_instance to monitor} [ignore='csv_vpn_clients] [interval='seconds'] [timeout='seconds']] [force[big | small]
 #                         [curlrate='number'] [minrates='csv_rates'] [verbose] [delay='seconds'] [noswitch[='hhmm-hhmm'[,...]]] [silent]
-#                         [multiconfig] [once] [pingonly=ping_target] [sendmail]
+#                         [multiconfig] [once] [nocurlrestart] [pingonly=ping_target] [sendmail {emailcfg='config_file'}] [reset [vpn_instance]] 
 #
 #          VPN_Failover   1
 #                         Monitor VPN Client 1 every 30 secs and if DOWN switch to VPN Client 2 and then monitor VPN Client 2
 #                         (This initiates the round robin for ALL VPN Clients (if configured) in sequence 2,3,4,5 then back to VPN Client 1)
 #          VPN_Failover   1 once
-#                         As above, but the script terminates immediately and exits if the VPN Client 1 connection is UP.
+#                         As above, but the script terminates immediately and exits if the VPN Client 1 connection is UP
+#          VPN_Failover   1 once force nocurlrestart
+#                         As above, but the script terminates immediately and exits if the VPN Client 1 connection is UP, without
+#                         testing the cURL performance is acceptable (ignores the 'force' request) 
 #          VPN_Failover   status
 #                         Show the status of ACTIVE monitoring processes and the semaphores '/tmp/vpnclientX-VPNFailover'
 #          VPN_Failover   2 ignore=3,4,5
@@ -48,9 +51,12 @@ VER="v1.18"
 #                         e.g. 1 vpn.LA.server     553     udp     #HMA Los Angeles
 #                              1 vpn.NY.server     443     tcp     #HMA New York
 #                              1 vpn.SF.server     1194    udp     #HMA San Francisco
+#          VPN_Failover   2 interval=60 sendmail emailcfg=/jffs/configs/Email.conf 
+#                         Monitor VPN Client 2 every 60 secs and if DOWN switch to VPN Client 3 and then monitor VPN Client 3
+#                         and send an email using the email configuration parms in '/jffs/configs/Email.conf'
 
 
-# https://pastebin.com/RNPJDhjJ
+# https://pastebin.com/RNPJDhjJ Legacy PasteBin file redirect to GitHub repository.
 
 # Script may be initiated by openvpn-event vpnclientX-up/vpnclientX-route-pre-up ONLY if one VPN Client is ACTIVE at any given time!!!!
 #
@@ -92,32 +98,11 @@ SayT() {
   echo -e $$ $@ | logger -t "($(basename $0))"
 }
 # shellcheck disable=SC2034
-ANSIColours() {
-
-  cRESET="\e[0m"
-  cBLA="\e[30m"
-  cRED="\e[31m"
-  cGRE="\e[32m"
-  cYEL="\e[33m"
-  cBLU="\e[34m"
-  cMAG="\e[35m"
-  cCYA="\e[36m"
-  cGRA="\e[37m"
-  cBGRA="\e[90m"
-  cBRED="\e[91m"
-  cBGRE="\e[92m"
-  cBYEL="\e[93m"
-  cBBLU="\e[94m"
-  cBMAG="\e[95m"
-  cBCYA="\e[96m"
-  cBWHT="\e[97m"
-  aBOLD="\e[1m"
-  aDIM="\e[2m"
-  aUNDER="\e[4m"
-  aBLINK="\e[5m"
-  aREVERSE="\e[7m"
-  cRED_="\e[41m"
-  cGRE_="\e[42m"
+ANSIColours () {
+    cRESET="\e[0m";cBLA="\e[30m";cRED="\e[31m";cGRE="\e[32m";cYEL="\e[33m";cBLU="\e[34m";cMAG="\e[35m";cCYA="\e[36m";cGRA="\e[37m"
+    cBGRA="\e[90m";cBRED="\e[91m";cBGRE="\e[92m";cBYEL="\e[93m";cBBLU="\e[94m";cBMAG="\e[95m";cBCYA="\e[96m";cBWHT="\e[97m"
+    aBOLD="\e[1m";aDIM="\e[2m";aUNDER="\e[4m";aBLINK="\e[5m";aREVERSE="\e[7m"
+    cWRED="\e[41m";cWGRE="\e[42m";cWYEL="\e[43m";cWBLU="\e[44m";cWMAG="\e[45m";cWCYA="\e[46m";cWGRA="\e[47m"
 }
 # Function Parse(String delimiter(s) variable_names)
 Parse() {
@@ -239,7 +224,7 @@ Check_VPN() {
     fi
     if [ -n "$CURL_TXT" ]; then
       SayT $CURL_TXT
-      echo -e "\t\t"$(date +"%H:%M:%S") $CURL_TXT >&2
+      echo -e "\t"$(date +"%H:%M:%S") $CURL_TXT >&2
     fi
 
     #if [ -n "$TXT_RATE" ];then
@@ -263,15 +248,15 @@ Check_VPN() {
       case "$2" in
         "$FORCE_WGET_12MB")
           SayT "cURL $(($(echo $RESULTS | cut -d',' -f5) / 1000000))MByte transfer took:" $(printf "00:%05.2f secs @%6.0f B/sec" "$(echo $RESULTS | cut -d',' -f2)" "$(echo $RESULTS | cut -d',' -f3)")
-          echo -e $cBWHT"\t\t"$(date +"%H:%M:%S") "VPN Client" $3 "cURL $(($(echo $RESULTS | cut -d',' -f5) / 1000000))MByte transfer took:" $(printf "00:%05.2f secs @%6.0f B/sec" "$(echo $RESULTS | cut -d',' -f2)" "$(echo $RESULTS | cut -d',' -f3)") >&2
+          echo -e $cBWHT"\t"$(date +"%H:%M:%S") "VPN Client" $3 "cURL $(($(echo $RESULTS | cut -d',' -f5) / 1000000))MByte transfer took:" $(printf "00:%05.2f secs @%6.0f B/sec" "$(echo $RESULTS | cut -d',' -f2)" "$(echo $RESULTS | cut -d',' -f3)") >&2
           ;;
         "$FORCE_WGET_500B")
           SayT "cURL $(($(echo $RESULTS | cut -d',' -f5)))Byte transfer took:" $(printf "00:%05.2f secs @%6.0f B/sec" "$(echo $RESULTS | cut -d',' -f2)" "$(echo $RESULTS | cut -d',' -f3)")
-          echo -e $cBWHT"\t\t"$(date +"%H:%M:%S") "VPN Client" $3 "cURL $(($(echo $RESULTS | cut -d',' -f5)))Byte transfer took:" $(printf "00:%05.2f secs @%6.0f B/sec" "$(echo $RESULTS | cut -d',' -f2)" "$(echo $RESULTS | cut -d',' -f3)") >&2
+          echo -e $cBWHT"\t"$(date +"%H:%M:%S") "VPN Client" $3 "cURL $(($(echo $RESULTS | cut -d',' -f5)))Byte transfer took:" $(printf "00:%05.2f secs @%6.0f B/sec" "$(echo $RESULTS | cut -d',' -f2)" "$(echo $RESULTS | cut -d',' -f3)") >&2
           ;;
         *)
           SayT "cURL $(($(echo $RESULTS | cut -d',' -f5)))transfer took:" $(printf "00:%05.2f secs" "$(echo $RESULTS | cut -d',' -f2)")
-          echo -e $cBWHT"\t\t"$(date +"%H:%M:%S") "VPN Client" $3 "cURL $(($(echo $RESULTS | cut -d',' -f5)))transfer took:" $(printf "00:%05.2f secs" "$(echo $RESULTS | cut -d',' -f2)") >&2
+          echo -e $cBWHT"\t"$(date +"%H:%M:%S") "VPN Client" $3 "cURL $(($(echo $RESULTS | cut -d',' -f5)))transfer took:" $(printf "00:%05.2f secs" "$(echo $RESULTS | cut -d',' -f2)") >&2
           ;;
       esac
 
@@ -281,21 +266,21 @@ Check_VPN() {
         STATUS="SLOW"
         echo -en ${cBRED}$ALARMBELL"\n" >&2
         SayT "***ERROR VPN Client $3 cURL file transfer rate '"$(echo $RESULTS | cut -d',' -f3 | cut -d'.' -f1)"' Bytes/sec, is less than the acceptable minimum specified '"$FORCE_WGET_MIN_RATE"' Bytes/sec"
-        echo -e "\t\tVPN Client $3 cURL file transfer rate '"$(echo $RESULTS | cut -d',' -f3 | cut -d'.' -f1)"' Bytes/sec, is less than the acceptable minimum specified '"$FORCE_WGET_MIN_RATE"' Bytes/sec" >&2
+        echo -e "\t\t"${cRESET}$cWRED"VPN Client $3 cURL file transfer rate '"$(echo $RESULTS | cut -d',' -f3 | cut -d'.' -f1)"' Bytes/sec, is less than the acceptable minimum specified '"$FORCE_WGET_MIN_RATE"' Bytes/sec"$cRESET >&2
         echo -en $cBYEL >&2
         METHOD=" using MINIMIUM acceptable cURL transfer rate"
       fi
     else
       echo -en $cBRED >&2
       if [ "$VERBOSE" == "verbose" ]; then # v1.08
-        Say "***ERROR WGET '"$WGET_DATA"' transfer FAILED RC="$RC
+        Say "***ERROR cURL '"$WGET_DATA"' transfer FAILED RC="$RC
       fi
 
       FORCE_OK=0
       if [ $RC -ne 8 ]; then
-        STATUS="FAIL" # Override PING/curl status!!
+        STATUS="FAIL" # Override PING/cURL status!!
       else
-        Say "*Warning WGET '"$WGET_DATA"' URL invalid?" # URL invalid so could be OFFLINE so ignore it
+        Say "*Warning cURL '"$WGET_DATA"' URL invalid?" # URL invalid so could be OFFLINE so ignore it
       fi
     fi
   fi
@@ -539,19 +524,55 @@ Convert_SECS_to_HHMMSS () {
 }
 SendMail(){
 
-#=================================> Insert favorite routine here
-#=================================> Insert favorite routine here
-#=================================> Insert favorite routine here
+	# SMTP parameters
+	# SMTP="smtp.gmail.com"
+	# PORT="465"
+	# USERNAME="you@gmail.com"
+	# PASSWORD="gmail-password"
 
-    Say "\a\n\n\tYou need to edit this script and add the Sendmail function first!"
+	# Mail Envelope
+	# FROM_NAME="Router"
+	# FROM_ADDRESS="you@gmail.com"
+	# TO_NAME="Your Name"
+	# TO_ADDRESS="you@gmail.com"
+
+	if [ -z "$SMTP" ] || [ -z "$PORT" ] || [ -z "$USERNAME" ] || [ -z "$PASSWORD" ];then
+		echo -en ${cBRED}"\n\t"$ALARMBELL
+		Say "***ERROR INVALID email SMTP configuration! - 'username=' and 'password=' parameters must not be blank"
+		return 1
+	fi
+	
+	if [ -z "$FROM_ADDRESS" ] || [ -z "$TO_NAME" ] || [ -z "$TO_ADDRESS" ];then
+		echo -en ${cBRED}"\n\t"$ALARMBELL
+		Say "***ERROR INVALID email Envelope configuration - 'fromaddress=' and 'toaddress=' parameters must not be blank"
+		return 1
+	fi
+
+	### Do not change below
+
+	ROUTER_IP=$(nvram get lan_ipaddr)
+	local BODY=$@					# Assume message is entirely in quotes!!!
+
+	echo "From: \"$FROM_NAME\" <$FROM_ADDRESS>" > /tmp/mail.txt
+	echo "To: \"$TO_NAME\" <$TO_ADDRESS>" >> /tmp/mail.txt
+	echo "Subject: VPN Failover Monitor $VER" >> /tmp/mail.txt
+	echo "" >> /tmp/mail.txt
+	echo -e "$BODY\n" >> /tmp/mail.txt
+
+
+	curl --url smtps://$SMTP:$PORT \
+	  --mail-from "$FROM_ADDRESS" --mail-rcpt "$TO_ADDRESS" \
+	  --upload-file /tmp/mail.txt \
+	  --ssl-reqd \
+	  --user "$USERNAME:$PASSWORD" --insecure
+
+
+	rm /tmp/mail.txt
 
     return 0
 
 }
 #=============================================Main=============================================================
-
-
-
 # shellcheck disable=SC2068
 Main() { true; } # Syntax that is Atom Shellchecker compatible!
 
@@ -588,11 +609,18 @@ if [ "$1" == "status" ] || [ "$1" == "reset" ];then                             
             [ -n "$PROCESS" ] && { echo $PROCESS; SayT "\t"$PROCESS; }
             [ -n "$INFO" ] && { echo -e ${cBCYA}$INFO ${COLOUR}$TXT; SayT "\t"$INFO $TXT; }
 
-            if [ "$1" == "reset" ];then
-                Say "\tVPN Client $I monitoring reset"
-                echo -e $cBGRE"\tVPN Client $I monitoring RESET"
-                kill $(ps -w | grep -F "{" | grep -F "VPN_Failover.sh ${I}" | grep -Eo "^.{,23}" | grep -v grep | grep -o "^[ ]*[0-9]*") 2>/dev/null
-                rm /tmp/vpnclient${I}-VPNFailover 2>/dev/null
+            if [ "$1" == "reset" ];then						# VPN_Failover [reset [vpn_instance]] 
+				if [ -n "$2" ] && [ "$I" == "$2" ] ;then		# v1.20 Reset a specific VPN Client instance
+					SayT "\tVPN Client $I monitoring reset"		# v1.20
+					echo -e $cBGRE"\tVPN Client $I monitoring terminated (and reset)"
+					kill $(ps -w | grep -F "{" | grep -F "VPN_Failover.sh ${I}" | grep -Eo "^.{,23}" | grep -v grep | grep -o "^[ ]*[0-9]*") 2>/dev/null
+					rm /tmp/vpnclient${I}-VPNFailover 2>/dev/null
+				else
+					SayT "\tVPN Client $I monitoring reset"	
+					echo -e $cBGRE"\tVPN Client $I monitoring terminated (and reset)"
+					kill $(ps -w | grep -F "{" | grep -F "VPN_Failover.sh ${I}" | grep -Eo "^.{,23}" | grep -v grep | grep -o "^[ ]*[0-9]*") 2>/dev/null
+					rm /tmp/vpnclient${I}-VPNFailover 2>/dev/null
+				fi
             fi
        done
     echo -e $cRESET
@@ -618,6 +646,7 @@ INTERVAL=30             # Default interval cycle to check if VPN Client needs to
 VPN_ID=                 # Default VPN Client to Check
 MULTI_VPNCONFIG_INDEX=0 # Used to track MULTI VPN config round-robin
 TRIES=3                 # 'pingonly=' try count                                         # v1.16
+NOCURLRESTART=          # Skip cURL performance test on restart                         # v1.20
 
 FORCE_WGET=
 FORCE_WGET_500B="http://proof.ovh.net/files/md5sum.txt"
@@ -640,6 +669,17 @@ CURLSIZE4="NOCURL"
 
 MIN_CURLRATE_5=0 # Default VPN Client 5 - can be overridden by 'minrates=?,?,?,?,nnnnnn'
 CURLSIZE5="NOCURL"
+
+# Assume Gmail configuration			# v1.19
+SMTP="smtp.gmail.com"
+PORT="465"
+USERNAME=
+PASSWORD=
+FROM_ADDRESS=							# "you@gmail.com"
+TO_NAME="To whom it may concern"		# "Your Name"
+TO_ADDRESS=								# "you@gmail.com"
+
+
 
 # First arg MUST be the VPN Client
 if [ -n "$1" ] && [ -n "$(echo $1 | grep -oE "^[1-5]")" ]; then
@@ -690,7 +730,6 @@ while [ $# -gt 0 ]; do # Until you run out of parameters . . .
       DELAY="$(echo "$1" | sed -n "s/^.*delay=//p")" # v1.08
       CMDDELAY=$DELAY
       ;;
-
     minrates=*) # Override the above '$MIN_CURLRATE_X' values if the 'minrates={n[.n]...}' is supplied  # v1.08
 
       VPN_CLIENT_RATES=$(echo "$1" | sed -n "s/^.*minrates=//p" | awk '{print $1}' | tr ',' ' ' | tr 'a-z' 'A-Z') # v1.09 allow 123k etc.
@@ -718,12 +757,10 @@ while [ $# -gt 0 ]; do # Until you run out of parameters . . .
       done
       CMDMINRATES=$VPN_CLIENT_RATES
       ;;
-
     verbose)
       VERBOSE="verbose" # Enable additional messages such as actual cURL transfer progress
       CMDVERBOSE=$VERBOSE
       ;;
-
     ignore=*) # v1.08
       IGNORE_VPN="$(echo "$1" | sed -n "s/^.*ignore=//p" | awk '{print $1}' | tr -d ',')" # Fix missing 'awk' v1.08a
       if [ -z "$IGNORE_VPN" ] || [ -n "$(echo "$IGNORE_VPN" | grep -E "[[:digit:]])")" ]; then
@@ -735,7 +772,6 @@ while [ $# -gt 0 ]; do # Until you run out of parameters . . .
       CMDIGNORE=$IGNORE_VPN
       #SayT "***DEBUG ignore="$CMDIGNORE
       ;;
-
     timeout=*)
       TIMEOUT="$(echo "$1" | sed -n "s/^.*timeout=//p" | awk '{print $1}' | grep -E "[[:digit:]]")"
       if [ -z "$TIMEOUT" ] || [ "$TIMEOUT" -gt 120 ]; then
@@ -746,7 +782,6 @@ while [ $# -gt 0 ]; do # Until you run out of parameters . . .
       fi
       CMDTIMEOUT=$TIMEOUT
       ;;
-
     interval=*)
       INTERVAL="$(echo "$1" | sed -n "s/^.*interval=//p" | awk '{print $1}' | grep -E "[[:digit:]]")"
       if [ -z "$INTERVAL" ] || [ "$INTERVAL" -gt 3600 ]; then
@@ -756,14 +791,16 @@ while [ $# -gt 0 ]; do # Until you run out of parameters . . .
         exit 998
       fi
       CMDINTERVAL=$INTERVAL
-      ;;
-
+      ;;  
+	nocurlrestart) # v1.20 Hmmm, should this only be valid if 'once' specified.
+	  CMDNOCURLRESTART=$1
+	  NOCURLRESTART="NoCURLRstart" 
+	  ;;
     force | forcebig | forcesmall)
       # cURL transfer?....optionally requires 'curlrate='/'minrates' specification of MINIMUM acceptable transfer rate(s)
       if [ "$(echo $1 | grep -cw 'forcesmall')" -gt 0 ]; then
         FORCE_WGET=$FORCE_WGET_500B
         eval CURLSIZE$VPN_ID=$FORCE_WGET
-
       else
         FORCE_WGET=$FORCE_WGET_12MB
         eval CURLSIZE$VPN_ID=$FORCE_WGET
@@ -779,7 +816,6 @@ while [ $# -gt 0 ]; do # Until you run out of parameters . . .
 
       CMDFORCE=$FORCE_WGET
       ;;
-
     curlrate=*)
       CMDCURLRATE=$(echo "$1" | sed -n "s/^.*curlrate=//p" | awk '{print $1}' | tr ',' ' ' | tr 'a-z' 'A-Z')
 
@@ -794,7 +830,6 @@ while [ $# -gt 0 ]; do # Until you run out of parameters . . .
       eval MIN_CURLRATE_${VPN_ID}=\$FORCE_WGET_MIN_RATE # Restrict the cURL rate to the nominated VPN Client
       CMDCURLRATE=$FORCE_WGET_MIN_RATE
       ;;
-
     noswitch | noswitch=*)
       if [ "$1" == "noswitch" ]; then
         NOSWITCH=1 # Don't allow VPN Client switching; except if VPN Client DOWN
@@ -825,12 +860,12 @@ while [ $# -gt 0 ]; do # Until you run out of parameters . . .
         BLOCKED_PERIODS=$BLOCKEDPERIOD
         CMDNOSWITCH=$BLOCKEDPERIOD
       fi
-      ;;
+      ;; 
     silent)
       ALARMBELL= # No audible console alert for ERRORS - except cmd arg validation
       CMDSILENT=$1
       SayT $CMDSILENT
-      ;;
+      ;; 
     multiconfig) # v.10
       CMDSERVERS=$1
       # Rather than rotate through the 5 VPN clients, use /jffs/configs/VPN_Failover to round-robin Server/port/protocol
@@ -858,22 +893,69 @@ while [ $# -gt 0 ]; do # Until you run out of parameters . . .
         echo -e ${cBRED}$ALARMBELL"\n\t***ERROR Multi-config file '/jffs/configs/VPN_Failover' NOT FOUND\n"$cRESET
         exit 99
       fi
-      ;;
+      ;; 
     once)
       CMDONCE=$1
       ONCE="once" # v1.11
-      SayT $CMDONCE
-      ;;
-
+      #SayT $CMDONCE # v1.20
+      ;; 
     pingonly=*)
       PING_LIST="$(echo "$1" | sed -n "s/^.*pingonly=//p" | awk '{print $1}')"
       [ -z "$PING_LIST" ] && PING_LIST="1.1.1.1"
       METHOD=" using PING to Point-to-Point LAN only"
       CMDPINGONLY=$1
-      ;;
+      ;;  
     sendmail)
       CMDSENDMAIL=$1
-      ;;
+      ;; 
+	emailcfg=*)							# Email parameters v1.19
+	  EMAILCFG="$(echo "$1" | sed -n "s/^.*emailcfg=//p" | awk '{print $1}')"
+	  if [ -f "$EMAILCFG" ];then
+		SMTP=$(awk 'BEGIN {FS = "="} /^smtp=/ {print $2}' $EMAILCFG | tr -d '"')
+		PORT=$(awk 'BEGIN {FS = "="} /^port=/ {print $2}' $EMAILCFG) | tr -d '"'
+		USERNAME=$(awk 'BEGIN {FS = "="} /^username=/ {print $2}' $EMAILCFG | tr -d '"')
+		PASSWORD=$(awk 'BEGIN {FS = "="} /^password=/ {print $2}' $EMAILCFG | tr -d '"')
+		TO_NAME=$(awk 'BEGIN {FS = "="} /^to=/ {print $2}' $EMAILCFG | tr -d '"')
+		FROM_ADDRESS=$(awk 'BEGIN {FS = "="} /^fromaddress=/ {print $2}' $EMAILCFG | tr -d '"')
+		TO_ADDRESS=$(awk 'BEGIN {FS = "="} /^toaddress=/ {print $2}' $EMAILCFG | tr -d '"')
+		CMDEMAILCFG=$1
+		
+		CMDSENDMAIL="sendmail"			# Assume implied 'sendmail' request! ;-)
+	  else
+		echo -en ${cBRED}"\n\t"$ALARMBELL
+		Say "***ERROR Email-config file '"$1"' NOT FOUND"
+		echo -e $cRESET
+		exit 99
+	  fi
+	  ;;
+	smtp=*)								# v1.19
+	  SMTP="$(echo "$1" | sed -n "s/^.*smtp=//p" | awk '{print $1}')"
+	  CMDSMTP="$1"
+	  ;;
+	port=*)								# v1.19
+	  PORT="$(echo "$1" | sed -n "s/^.*port=//p" | awk '{print $1}')"
+	  CMDPORT="$1"
+	  ;;
+	username=*)							# v1.19
+	  USERNAME="$(echo "$1" | sed -n "s/^.*username=//p" | awk '{print $1}')"
+	  CMDUSERNAME="$1"
+	  ;;
+    password=*)							# v1.19
+	  PASSWORD="$(echo "$1" | sed -n "s/^.*password=//p" | awk '{print $1}')"
+	  CMDPASSWORD="$1"
+	  ;;
+	to=*)								# v1.19
+	  TO_NAME="$(echo "$1" | sed -n "s/^.*to=//p" | awk '{print $1}')"
+	  CMDTO="$1"
+	  ;;
+	fromaddress=*)						# v1.19
+	  FROM_ADDRESS="$(echo "$1" | sed -n "s/^.*fromaddress=//p" | awk '{print $1}')"
+	  CMDFROMADDRESS="$1"
+	  ;;
+	toaddress=*)						# v1.19
+	  TO_ADDRESS="$(echo "$1" | sed -n "s/^.*toaddress=//p" | awk '{print $1}')"
+	  CMDTOADDRESS="$1"
+	  ;;
     *)
       echo -e ${cBRED}$ALARMBELL"\n\t***ERROR unrecognised directive '"$1"'\n"$cRESET
       exit 99
@@ -974,7 +1056,7 @@ while true; do
 
   # Check if VPN isn't UP or performance is unacceptably 'SLOW'
   PERFORMANCE=                                                       # v1.18 WTF!
-  if [ -z "$PING_LIST" ];then                                       # v1.16
+  if [ -z "$PING_LIST" ];then                                        # v1.16
     PERFORMANCE="$(Check_VPN "CURL" "$FORCE_WGET" "$VPN_ID")"        # v1.08 WTF!
   else
     PERFORMANCE="$(Check_VPN "$PING_LIST" "$FORCE_WGET" "$VPN_ID")"  # v1.16 WTF!
@@ -995,8 +1077,9 @@ while true; do
       0) REASON=$VPNSTATE";Disconnected" ;;
       1) REASON=$VPNSTATE";Connecting" ;;
       2) REASON=$VPNSTATE";Connected"
-         [ -n "$(echo "$PERFORMANCE" | grep -o "SLOW")" ] && { REASON=$REASON" but SLOW!"      ; PERFORMANCE="FAIL"; }     # Hack v1.18
-         [ -n "$(echo "$PERFORMANCE" | grep -o "FAIL")" ] && { REASON=$REASON" but tunnel DOWN"; PERFORMANCE="FAIL"; }     # Hack v1.18
+         #[ -n "$(echo "$PERFORMANCE" | grep -Fo "SLOW")" ] && { REASON=$REASON" but SLOW!"      ; PERFORMANCE="FAIL"; }     # Hack v1.18
+         [ -n "$(echo "$PERFORMANCE" | grep -Fo "SLOW")" ] && { REASON=$REASON" but 'SLOW'!"      ; }     					# Hack v1.20
+		 [ -n "$(echo "$PERFORMANCE" | grep -Fo "FAIL")" ] && { REASON=$REASON" but tunnel DOWN"; PERFORMANCE="FAIL"; }     # Hack v1.18
          ;;
    "-1") REASON=$VPNSTATE";Unknown Error - Password/routing issue?" ;;
       *) REASON=$VPNSTATE";?" ;;
@@ -1005,7 +1088,12 @@ while true; do
     if [ "$VPNSTATE" != "$IS_VPN_DOWN" ]; then
       # VPN State is UP i.e. 'Connected but SLOW', 'Connecting' or 'Disconnecting' or in 'Error', so stop it anyway?
 
-      # If the VPN Client was taken down because it is SLOW simply restart it?  # v1.08
+	  STATE_COLOUR=$cBGRE		# v1.20
+
+	  [ -n "$(echo "$REASON" | grep -F "SLOW")" ] && STATE_COLOUR=${cRESET}$cWRED		# v1.20
+	  [ -n "$(echo "$REASON" | grep -F "DOWN")" ] && STATE_COLOUR=$cBRED			# v1.20
+		
+      # If the VPN Client was taken down because it is SLOW simply restart it?  	# v1.08
       if [ -n "$(echo "$REASON" | grep -F "SLOW")" ]; then
         if [ "$DISABLEROUNDROBIN" == "Y" ]; then
           NEW_VPN_ID=$VPN_ID # Temporary TBA
@@ -1043,25 +1131,30 @@ while true; do
         [ -n "$CMDSENDMAIL" ] && SendMail "VPN Client" $VPN_ID "connection is deemed throughput/performance degraded but tolerated... OK"
       else
         #Say "VPN Client switch is NOT PERIOD restricted ("$BLOCKED_PERIODS")"
-
         SayT "**VPN Client Monitor: Switching VPN Client" $VPN_ID "to VPN Client" $NEW_VPN_ID "(Reason: VPN Client" $VPN_ID "STATE=${REASON})"
-        SayT "**VPN Client Monitor: Terminating VPN Client" $VPN_ID
-        echo -e $cBCYA"\t\tSwitching VPN Client" $VPN_ID "to VPN Client" $NEW_VPN_ID "(Reason: VPN Client" $VPN_ID "STATE=${REASON})"
-        echo -e ${cBRED}$ALARMBELL"\t\tTerminating VPN Client" $VPN_ID
+		echo -e $cBCYA"\t\tSwitching VPN Client" $VPN_ID "to VPN Client" $NEW_VPN_ID "(Reason: VPN Client" $VPN_ID "STATE:"${STATE_COLOUR}${REASON}${cRESET}${cBCYA}")"$cRESET
 
-        # Prevent vpnclientX-route-pre-down from terminating this script
-        echo "NOKILL" >$VPNFAILOVER                       # v1.15
-        RC=$(service stop_vpnclient${VPN_ID})
+		# Don't attempt to stop VPN Client if specifically in "ignore=n,n,n"
+        if [ -z "$(echo "$IGNORE_VPN" | grep -oF "$VPN_ID")" ]; then		# v1.20
+		   SayT "**VPN Client Monitor: Terminating VPN Client" $VPN_ID
 
-        Check_VPNState $VPN_ID $IS_VPN_DOWN
+           echo -e ${cBRED}$ALARMBELL"\t\tTerminating VPN Client" $VPN_ID
+		
+			# Prevent vpnclientX-route-pre-down from terminating this script
+			echo "NOKILL" >$VPNFAILOVER                       # v1.15
+			RC=$(service stop_vpnclient${VPN_ID})
+
+			Check_VPNState $VPN_ID $IS_VPN_DOWN
+		fi
 
         NEXTVPN="Y" # Override 'noswitch' i.e. ensure that a VPN is ALWAYs started if VPN is DOWN
       fi
 
     else
       # VPN State is 'Disconnected'
+	  STATE_COLOUR=$cBGRA	# v1.20
       SayT "**VPN Client Monitor: Switching VPN Client" $VPN_ID "to VPN Client" $NEW_VPN_ID "(Reason: VPN Client" $VPN_ID "STATE=${REASON})"
-      echo -e $cBCYA"\t\tSwitching VPN Client" $VPN_ID "to VPN Client" $NEW_VPN_ID "(Reason: VPN Client" $VPN_ID "STATE=${REASON})"
+      echo -e $cBCYA"\t\tSwitching VPN Client" $VPN_ID "to VPN Client" $NEW_VPN_ID "(Reason: VPN Client" $VPN_ID "STATE:"${STATE_COLOUR}${REASON}${cBCYA}")"$cRESET		# v1.20
       [ -n "$CMDSENDMAIL" ] && SendMail "Switching VPN Client" $VPN_ID "to VPN Client" $NEW_VPN_ID "(Reason: VPN Client" $VPN_ID "STATE=${REASON})"
       NEXTVPN="Y" # Override 'noswitch' i.e. ensure that a VPN is ALWAYs started if VPN Client is DOWN
     fi
@@ -1072,9 +1165,9 @@ while true; do
       VPN_NO_SLEEP=
       VPN_ADDR=$(Get_VPN_ADDR $NEW_VPN_ID)
       if [ -z "$VPN_ADDR" ]; then
-        echo -e $cRED
-        SayT "*Warning VPN Client" $NEW_VPN_ID "not configured? - auto IGNORED/SKIPPED"
-        echo -e "\t\t*Warning VPN Client" $NEW_VPN_ID "not configured? - auto IGNORED/SKIPPED"
+        echo -en $cRED
+        SayT "VPN Client" $NEW_VPN_ID "not configured? - auto IGNORED/SKIPPED"
+        echo -e $cBGRA"\t\tVPN Client" $NEW_VPN_ID "not configured? - auto IGNORED/SKIPPED"
         VPN_NO_SLEEP="NO CONFIG" # Indicate that the $INTERVAL wait time should be skipped...
       else
 
@@ -1110,9 +1203,21 @@ while true; do
             #exit 99
             continue
           else
+		  
+			if [ -n "$ONCE" ] && [ -n "$NOCURLRESTART" ]; then # v1.20
+			  SayT "VPN Client Monitor: Monitoring VPN Client" $NEW_VPN_ID "terminated ('nocurlrestart' & 'once')"
+			  echo -e $cBYEL"\n\t"$(date +"%H:%M:%S")" $VER VPN Client Monitor: Monitoring VPN Client" $NEW_VPN_ID "terminated ('nocurlrestart' & 'once')\n"
+			  # v1.20 Check if restarted VPN Client will request /jffs/scripts/VPN_Failover.sh - don't delete its PID file
+			  if [ -z "$(grep -vE "^#" /jffs/scripts/vpnclient${NEW_VPN_ID}-up | grep -Eo "^/jffs/scripts/VPN_Failover|^sh /jffs/scripts/VPN_Failover" /jffs/scripts/vpnclient${NEW_VPN_ID}-up)" ];then	
+				rm /tmp/vpnclient${NEW_VPN_ID}-VPNFailover 2>/dev/null   # Safe to delete this instance's PID file!    
+			  fi
+			  echo -e $cRESET
+			  exit 0
+			fi
+	
             # Check for external kill switch
            if [ ! -f $VPNFAILOVER ]; then
-              Say $VER "VPN Client Monitor: Monitoring VPN Client" $VPN_ID "terminated ('"$VPNFAILOVER"' not found)"
+              Say $VER "VPN Client Monitor: Monitoring VPN Client" $NEW_VPN_ID "terminated ('"$VPNFAILOVER"' not found)" # v1.20
               #echo -e $cBYEL"\t\t"$(date +"%H:%M:%S")" Monitoring VPN Client" $VPN_ID "terminated ('"$VPNFAILOVER"' not found)\n"$cRESET
               break
            fi
@@ -1125,9 +1230,9 @@ while true; do
             NEXTVPN= # Reset the override i.e. 'noswitch' will now be honoured!
           fi
         else
-          echo -e $cRED
-          SayT "*Warning Configured VPN Client" $NEW_VPN_ID " - Manually set to be IGNORED/SKIPPED"
-          echo -e "\t\t*Warning Configured VPN Client" $NEW_VPN_ID "- Manually set to be IGNORED/SKIPPED"
+          echo -en $cBRED
+          SayT "Configured VPN Client" $NEW_VPN_ID " - Manually set to be IGNORED/SKIPPED"
+          echo -e $cBGRA"\t\tConfigured VPN Client" $NEW_VPN_ID "- Manually set to be IGNORED/SKIPPED"
           VPN_NO_SLEEP="IGNORE" # Indicate that the $INTERVAL wait time should be skipped...
         fi
       fi
@@ -1137,15 +1242,15 @@ while true; do
     fi
   else
     SayT "VPN Client Monitor: VPN Client" $VPN_ID "status OK" $METHOD
-    echo -e $cBGRE"\t\tVPN Client" $VPN_ID "connection status OK" $METHOD
+    echo -e $cBGRE"\n\t\tVPN Client" $VPN_ID "connection status OK" $METHOD
 
     if [ -f "$VPNFAILOVER" ]; then
         echo $$ >$VPNFAILOVER                          # v1.15 Allow vpnclientX-route-pre-down to terminate this script by PID
     fi
 
     if [ -n "$ONCE" ]; then # v1.11.1
-      SayT "VPN Client Monitor: Monitoring VPN Client" $VPN_ID "terminated"
-      echo -e $cBYEL"\n\t"$(date +"%H:%M:%S")" $VER VPN Client Monitor: Monitoring VPN Client" $VPN_ID "terminated\n"
+      SayT "VPN Client Monitor: Monitoring VPN Client" $VPN_ID "terminated ('once')"
+      echo -e $cBYEL"\n\t"$(date +"%H:%M:%S")" $VER VPN Client Monitor: Monitoring VPN Client" $VPN_ID "terminated ('once')\n"
       rm /tmp/vpnclient${VPN_ID}-VPNFailover 2>/dev/null       # v1.17
       echo -e $cRESET
       exit 0
