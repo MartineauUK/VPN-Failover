@@ -1,7 +1,7 @@
 #!/bin/sh
 # shellcheck disable=SC2086,SC2068,SC2039,SC2242,SC2027,SC2155,SC2046
-VER="v1.20"
-#======================================================================================================= © 2016-2019 Martineau, v1.20
+VER="v1.21"
+#======================================================================================================= © 2016-2019 Martineau, v1.21
 #
 # Check every 30 secs, and switch to alternate VPN Client if current VPN Client is DOWN, or expected cURL data transfer is 'SLOW'
 #
@@ -609,12 +609,14 @@ if [ "$1" == "status" ] || [ "$1" == "reset" ];then                             
             [ -n "$PROCESS" ] && { echo $PROCESS; SayT "\t"$PROCESS; }
             [ -n "$INFO" ] && { echo -e ${cBCYA}$INFO ${COLOUR}$TXT; SayT "\t"$INFO $TXT; }
 
-            if [ "$1" == "reset" ];then						# VPN_Failover [reset [vpn_instance]] 
-				if [ -n "$2" ] && [ "$I" == "$2" ] ;then		# v1.20 Reset a specific VPN Client instance
-					SayT "\tVPN Client $I monitoring reset"		# v1.20
-					echo -e $cBGRE"\tVPN Client $I monitoring terminated (and reset)"
-					kill $(ps -w | grep -F "{" | grep -F "VPN_Failover.sh ${I}" | grep -Eo "^.{,23}" | grep -v grep | grep -o "^[ ]*[0-9]*") 2>/dev/null
-					rm /tmp/vpnclient${I}-VPNFailover 2>/dev/null
+            if [ "$1" == "reset" ];then								# VPN_Failover [reset [vpn_instance]] 
+				if [ -n "$2" ];then									# v1.21
+					if [ "$I" == "$2" ];then						# v1.20 Reset a specific VPN Client instance
+						SayT "\tVPN Client $I monitoring reset"		# v1.20
+						echo -e $cBGRE"\tVPN Client $I monitoring terminated (and reset)"
+						kill $(ps -w | grep -F "{" | grep -F "VPN_Failover.sh ${I}" | grep -Eo "^.{,23}" | grep -v grep | grep -o "^[ ]*[0-9]*") 2>/dev/null
+						rm /tmp/vpnclient${I}-VPNFailover 2>/dev/null
+					fi
 				else
 					SayT "\tVPN Client $I monitoring reset"	
 					echo -e $cBGRE"\tVPN Client $I monitoring terminated (and reset)"
@@ -684,6 +686,7 @@ TO_ADDRESS=								# "you@gmail.com"
 # First arg MUST be the VPN Client
 if [ -n "$1" ] && [ -n "$(echo $1 | grep -oE "^[1-5]")" ]; then
   VPN_ID=$1
+  SWITCH_VPN=$VPN_ID							# v1.21
 else
   SayT "**ERROR** VPN Client '"$1"' is INVALID (1-5 only)"
   echo -e $cBRED"\a\n\t**ERROR** VPN Client '"$1"' is INVALID (1-5 only)\n"
@@ -1131,8 +1134,8 @@ while true; do
         [ -n "$CMDSENDMAIL" ] && SendMail "VPN Client" $VPN_ID "connection is deemed throughput/performance degraded but tolerated... OK"
       else
         #Say "VPN Client switch is NOT PERIOD restricted ("$BLOCKED_PERIODS")"
-        SayT "**VPN Client Monitor: Switching VPN Client" $VPN_ID "to VPN Client" $NEW_VPN_ID "(Reason: VPN Client" $VPN_ID "STATE=${REASON})"
-		echo -e $cBCYA"\t\tSwitching VPN Client" $VPN_ID "to VPN Client" $NEW_VPN_ID "(Reason: VPN Client" $VPN_ID "STATE:"${STATE_COLOUR}${REASON}${cRESET}${cBCYA}")"$cRESET
+        SayT "**VPN Client Monitor: Switching VPN Client" $SWITCH_VPN "to VPN Client" $NEW_VPN_ID "(Reason: VPN Client" $VPN_ID "STATE=${REASON})"
+		echo -e $cBCYA"\t\tSwitching VPN Client" $SWITCH_VPN "to VPN Client" $NEW_VPN_ID "(Reason: VPN Client" $VPN_ID "STATE:"${STATE_COLOUR}${REASON}${cRESET}${cBCYA}")"$cRESET
 
 		# Don't attempt to stop VPN Client if specifically in "ignore=n,n,n"
         if [ -z "$(echo "$IGNORE_VPN" | grep -oF "$VPN_ID")" ]; then		# v1.20
@@ -1153,9 +1156,9 @@ while true; do
     else
       # VPN State is 'Disconnected'
 	  STATE_COLOUR=$cBGRA	# v1.20
-      SayT "**VPN Client Monitor: Switching VPN Client" $VPN_ID "to VPN Client" $NEW_VPN_ID "(Reason: VPN Client" $VPN_ID "STATE=${REASON})"
-      echo -e $cBCYA"\t\tSwitching VPN Client" $VPN_ID "to VPN Client" $NEW_VPN_ID "(Reason: VPN Client" $VPN_ID "STATE:"${STATE_COLOUR}${REASON}${cBCYA}")"$cRESET		# v1.20
-      [ -n "$CMDSENDMAIL" ] && SendMail "Switching VPN Client" $VPN_ID "to VPN Client" $NEW_VPN_ID "(Reason: VPN Client" $VPN_ID "STATE=${REASON})"
+      SayT "**VPN Client Monitor: Switching VPN Client" $SWITCH_VPN "to VPN Client" $NEW_VPN_ID "(Reason: VPN Client" $VPN_ID "STATE=${REASON})"
+      echo -e $cBCYA"\t\tSwitching VPN Client" $SWITCH_VPN "to VPN Client" $NEW_VPN_ID "(Reason: VPN Client" $VPN_ID "STATE:"${STATE_COLOUR}${REASON}${cBCYA}")"$cRESET		# v1.20
+      [ -n "$CMDSENDMAIL" ] && SendMail "Switching VPN Client" $SWITCH_VPN "to VPN Client" $NEW_VPN_ID "(Reason: VPN Client" $VPN_ID "STATE=${REASON})"
       NEXTVPN="Y" # Override 'noswitch' i.e. ensure that a VPN is ALWAYs started if VPN Client is DOWN
     fi
 
@@ -1203,6 +1206,8 @@ while true; do
             #exit 99
             continue
           else
+		  
+			SWITCH_VPN=$NEW_VPN_ID					# v1.21
 		  
 			if [ -n "$ONCE" ] && [ -n "$NOCURLRESTART" ]; then # v1.20
 			  SayT "VPN Client Monitor: Monitoring VPN Client" $NEW_VPN_ID "terminated ('nocurlrestart' & 'once')"
