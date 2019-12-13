@@ -1,7 +1,7 @@
 #!/bin/sh
 # shellcheck disable=SC2086,SC2068,SC2039,SC2242,SC2027,SC2155,SC2046
-VER="v1.22"
-#======================================================================================================= © 2016-2019 Martineau, v1.22
+VER="v1.23"
+#======================================================================================================= © 2016-2019 Martineau, v1.23
 #
 # Check every 30 secs, and switch to alternate VPN Client if current VPN Client is DOWN, or expected cURL data transfer is 'SLOW'
 #
@@ -589,63 +589,94 @@ if [ "$1" == "help" ] || [ "$1" == "-h" ]; then # Show help
   exit 0
 fi
 
-SNAME="$(echo $0 | sed 's/.*\///')"
+SNAME="${0##*/}"	# v1.23 SNAME=$(basename $0); SNAME="$(echo $0 | sed 's/.*\///')"; SNAME=$(echo $0| awk -F"/" '{print $NF}')
+THIS="$$"
+
 
 if [ "$1" == "status" ] || [ "$1" == "reset" ];then                                                     # v1.17
     echo -e $cBMAG"\n\tActive VPN Failover monitor processes\n"
 
+	LOCKFILE="/tmp/$(basename $0)-flock"					# v1.23
+	FD=171
+	eval exec "$FD>$LOCKFILE"
+	flock -x $FD
+	
+    PIDS="$(pidof $SNAME)"                          # v1.21
+			
     for VPN_ID in 1 2 3 4 5
         do
-            PIDS="$(pidof $SNAME)"                          # v1.21
             PROCESS=
             TXT=
             INFO=
             STAT=
             PID=
+			ORPHAN=1										# v1.23
+			VPNFAILOVER="/tmp/vpnclient"$VPN_ID"-VPNFailover"
             
-            echo -en $cBYEL         
-            for PID in $PIDS                                # v1.21
-                do
-                    VPN_INSTANCE=$(ps -w | awk -v pattern="${PID}" '{ if ($1 == pattern) print $8 }')
-                    if [ "$VPN_ID" != "$VPN_INSTANCE" ];then
-                        continue
-                    fi
-                    
-                    PROCESS="$(ps -w | awk -v pattern="${PID}" '{ if ($1 == pattern) print $0 }')"
-                    [ -z "$PROCESS" ] && PID=                       # v1.21
+            echo -en $cBYEL 
 
-                    if [ -f "/tmp/vpnclient${VPN_ID}-VPNFailover" ];then
-                        INFO="$(ls -l "/tmp/vpnclient${VPN_ID}-VPNFailover" 2>/dev/null | sed 's/^.*root//')"
-                        STAT="$(awk '{print $1}' /tmp/vpnclient${VPN_ID}-VPNFailover)"
-                        [ "$STAT" == "NOKILL" ] && COLOUR=$cRED || COLOUR=$cBGRE
-                        TXT="Status/PID="$STAT"\n"
-                    else
-                        if [ "$1" != "reset" ];then
-                            [ -n "$PROCESS" ] && INFO=$cRED"**Warning Pending self-termination?"
-                        fi
-                    fi
-                    
-                    [ -n "$PROCESS" ] && { echo -e ${BWHT}$PROCESS; SayT "\t"$PROCESS; }
-                    [ -n "$INFO" ] && { echo -e ${cBCYA}$INFO ${COLOUR}$TXT; SayT "\t"$INFO $TXT; }
 
-                    if [ "$1" == "reset" ] && [ "$PID" != "$$" ];then       # VPN_Failover [reset [vpn_instance]] 
-                        if [ -n "$2" ];then                                 # v1.21
-                            if [ "$VPN_ID" == "$2" ];then                       # v1.20 Reset a specific VPN Client instance
-                                SayT "\tVPN Client $VPN_ID monitoring reset"        # v1.20
-                                echo -e $cBGRE"\tVPN Client $VPN_ID monitoring ${cBRED}${aREVERSE}terminated${cRESET}$cBGRE (and reset)\n"
-                                [ -n "$PID" ] && kill $PID
-                                rm /tmp/vpnclient${VPN_ID}-VPNFailover 2>/dev/null
-                            fi
-                        else
-                            SayT "\tVPN Client $VPN_ID monitoring reset"    
-                            echo -e $cBGRE"\tVPN Client $VPN_ID monitoring ${cBRED}${aREVERSE}terminated${cRESET}$cBGRE (and reset)\n"
-                            [ -n "$PID" ] && kill $PID
-                            rm /tmp/vpnclient${VPN_ID}-VPNFailover 2>/dev/null
-                        fi
-                    fi
-                    echo -en $cRESET
-                done
+			for PID in $PIDS                               # v1.21
+				do
+					[ "$PID" == "$THIS" ] && continue		# v1.23 Ignore this instance!
+					VPN_INSTANCE=$(ps w | awk -v pattern="${PID}" '{ if ($1 == pattern) print $8 }')	# v1.23
+					[ -n "$(echo $VPN_INSTANCE | grep "$SNAME")" ] && VPN_INSTANCE=$(ps w | awk -v pattern="${PID}" '{ if ($1 == pattern) print $9 }')
+					if [ "$VPN_ID" != "$VPN_INSTANCE" ];then
+						continue
+					fi
+					
+					PROCESS="$(ps w | awk -v pattern="${PID}" '{ if ($1 == pattern) print $0 }')"		# v1.23
+					[ -z "$PROCESS" ] && PID=   || ORPHAN=                    # v1.23
+
+					if [ -f "$VPNFAILOVER" ];then
+						INFO="$(ls -l "$VPNFAILOVER" 2>/dev/null | sed 's/^.*root//')"
+						STAT="$(awk '{print $1}' $VPNFAILOVER)"
+						[ "$STAT" == "NOKILL" ] && COLOUR=$cRED || COLOUR=$cBGRE
+						TXT="Status/PID="$STAT"\n"
+					else
+						if [ "$1" != "reset" ];then
+							[ -n "$PROCESS" ] && INFO=$cRED"**Warning Pending self-termination?"
+						fi
+					fi
+					
+					[ -n "$PROCESS" ] && { echo -e ${BWHT}$PROCESS; SayT "\t"$PROCESS; }
+					[ -n "$INFO" ] && { echo -e ${cBCYA}$INFO ${COLOUR}$TXT; SayT "\t"$INFO $TXT; }
+					
+
+				done
+
+	
+			if [ "$1" == "reset" ] ;then       # VPN_Failover [reset [vpn_instance]] 
+				if [ -n "$2" ];then                                 	# v1.21
+					if [ "$VPN_ID" == "$2" ];then                       # v1.20 Reset a specific VPN Client instance
+						SayT "\tVPN Client $VPN_ID monitoring reset"    # v1.20
+						echo -e $cBGRE"\tVPN Client $VPN_ID monitoring ${cBRED}${aREVERSE}terminated${cRESET}$cBGRE (and reset)\n"
+						[ -n "$PID" ] && kill $PID 	
+						rm $VPNFAILOVER 2>/dev/null
+						ORPHAN=
+					fi
+				else
+					SayT "\tVPN Client $VPN_ID monitoring reset"    
+					echo -e $cBGRE"\tVPN Client $VPN_ID monitoring ${cBRED}${aREVERSE}terminated${cRESET}$cBGRE (and reset)\n"
+					[ -n "$PID" ] && kill $PID 	
+					rm $VPNFAILOVER 2>/dev/null
+					ORPHAN=
+				fi
+				
+			fi
+			
+			if [ "$ORPHAN" == "1" ] && [ -f "$VPNFAILOVER" ];then						# v1.23
+				SayT "***ERROR Orphaned PID file '"$VPNFAILOVER"'"
+				echo -e $cBRED"\t***ERROR Orphaned PID file '"$VPNFAILOVER"'"
+			fi
+			
+			
+			echo -en $cRESET
         done
+		
+	
+	flock -u $FD		# Release the semaphore lock		# v1.23
+	
     echo -e $cRESET
     exit 0
 fi
@@ -716,23 +747,33 @@ else
   exit 99
 fi
 
+LOCKFILE="/tmp/$(basename $0)-flock"					# v1.23
+FD=171
+eval exec "$FD>$LOCKFILE"
+flock -x $FD
+	
 # Is there ALREADY a VPN Failover monitor process for this VPN?
 VPNFAILOVER="/tmp/vpnclient"$VPN_ID"-VPNFailover"
-PIDS="$(pidof $SNAME)"
+PIDS="$(pidof $SNAME)"									
 
 for PID in $PIDS                                # v1.21
-    do
-        THIS="$$"                               # v1.22 Ignore this instance!
-        VPN_INSTANCE=$(ps -w | awk -v pattern="${PID}" '{ if ($1 == pattern) print $8 }')
-        if [ "$PID" != "$THIS" ] && [ "$VPN_ID" == "$VPN_INSTANCE" ];then             
-            PROCESS="$(ps -w | awk -v pattern="${PID}" '{ if ($1 == pattern) print $0 }')" 
-            SayT "\t**Warning VPN Client $VPN_ID Failover monitor already running!\n\t\tPID=$PROCESS"
-            echo -e $cBRED"\n\n\a\t***ERROR: VPN Client $VPN_ID Failover monitor already running!\n\t\tPID="${PROCESS}$cRESET
+    do         
+		[ "$PID" == "$THIS" ] && continue		# v1.23 Ignore this instance!
+        VPN_INSTANCE=$(ps w | awk -v pattern="${PID}" '{ if ($1 == pattern) print $8 }')	# v1.23
+		[ -n "$(echo $VPN_INSTANCE | grep "$SNAME")" ] && VPN_INSTANCE=$(ps w | awk -v pattern="${PID}" '{ if ($1 == pattern) print $9 }')		# v1.23
+        if [ "$VPN_ID" == "$VPN_INSTANCE" ] || [ -f $VPNFAILOVER ];then 
+			PROCESS="PID=$(ps -w | awk -v pattern="${PID}" '{ if ($1 == pattern) print $0 }')" || PROCESS=  
+			[ -z "$PROCESS" ] && PROCESS="PID file exists! '"$VPNFAILOVER"'"
+            SayT "\t**Warning VPN Client $VPN_ID Failover monitor already running!\n\t\t$PROCESS"
+            echo -e $cBRED"\n\n\a\t***ERROR: VPN Client $VPN_ID Failover monitor already running!\n\t\t"${PROCESS}$cRESET
+			flock -u $FD						# Release the semaphore lock		# v1.23
             exit 1
         fi
     done
 
 echo $$ >$VPNFAILOVER
+
+flock -u $FD									# Release the semaphore lock		# v1.23
 
 #For verbose debugging, uncomment the following two lines, and uncomment the last line of this script
 #set -x
