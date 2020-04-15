@@ -1,14 +1,14 @@
 #!/bin/sh
 # shellcheck disable=SC2086,SC2068,SC2039,SC2242,SC2027,SC2155,SC2046
-VER="v1.23"
-#======================================================================================================= © 2016-2019 Martineau, v1.23
+VER="v1.24"
+#======================================================================================================= © 2016-2019 Martineau, v1.24
 #
 # Check every 30 secs, and switch to alternate VPN Client if current VPN Client is DOWN, or expected cURL data transfer is 'SLOW'
 #
 #          VPN_Failover   [-h | help | status ] |
 #                         {vpn_instance to monitor} [ignore='csv_vpn_clients] [interval='seconds'] [timeout='seconds']] [force[big | small]
 #                         [curlrate='number'] [minrates='csv_rates'] [verbose] [delay='seconds'] [noswitch[='hhmm-hhmm'[,...]]] [silent]
-#                         [multiconfig] [once] [nocurlrestart] [pingonly=ping_target] [sendmail {emailcfg='config_file'}] [reset [vpn_instance]] 
+#                         [multiconfig] [once] [nocurlrestart] [pingonly=ping_target] [sendmail {emailcfg='config_file'}] [reset [vpn_instance]]
 #
 #          VPN_Failover   1
 #                         Monitor VPN Client 1 every 30 secs and if DOWN switch to VPN Client 2 and then monitor VPN Client 2
@@ -17,7 +17,7 @@ VER="v1.23"
 #                         As above, but the script terminates immediately and exits if the VPN Client 1 connection is UP
 #          VPN_Failover   1 once force nocurlrestart
 #                         As above, but the script terminates immediately and exits if the VPN Client 1 connection is UP, without
-#                         testing the cURL performance is acceptable (ignores the 'force' request) 
+#                         testing the cURL performance is acceptable (ignores the 'force' request)
 #          VPN_Failover   status
 #                         Show the status of ACTIVE monitoring processes and the semaphores '/tmp/vpnclientX-VPNFailover'
 #          VPN_Failover   2 ignore=3,4,5
@@ -51,7 +51,7 @@ VER="v1.23"
 #                         e.g. 1 vpn.LA.server     553     udp     #HMA Los Angeles
 #                              1 vpn.NY.server     443     tcp     #HMA New York
 #                              1 vpn.SF.server     1194    udp     #HMA San Francisco
-#          VPN_Failover   2 interval=60 sendmail emailcfg=/jffs/configs/Email.conf 
+#          VPN_Failover   2 interval=60 sendmail emailcfg=/jffs/configs/Email.conf
 #                         Monitor VPN Client 2 every 60 secs and if DOWN switch to VPN Client 3 and then monitor VPN Client 3
 #                         and send an email using the email configuration parms in '/jffs/configs/Email.conf'
 
@@ -118,6 +118,32 @@ Parse() {
   read -r -- "$@" <<EOF
 $TEXT
 EOF
+}
+Get_Router_Model() {
+
+    # Contribution by @thelonelycoder as odmpid is blank for non SKU hardware,
+    local HARDWARE_MODEL
+    [ -z "$(nvram get odmpid)" ] && HARDWARE_MODEL=$(nvram get productid) || HARDWARE_MODEL=$(nvram get odmpid)
+
+    echo $HARDWARE_MODEL
+
+    return 0
+}
+Get_WAN_IF_Name() {
+
+    local IF_NAME=$(nvram get wan0_ifname)              # DHCP/Static ?
+
+    # Usually this is probably valid for both eth0/ppp0e ?
+    if [ "$(nvram get wan0_gw_ifname)" != "$IF_NAME" ];then
+        local IF_NAME=$(nvram get wan0_gw_ifname)
+    fi
+
+    if [ ! -z "$(nvram get wan0_pppoe_ifname)" ];then
+        local IF_NAME="$(nvram get wan0_pppoe_ifname)"      # PPPoE
+    fi
+
+    echo $IF_NAME
+
 }
 Check_VPN() {
 
@@ -541,7 +567,7 @@ SendMail(){
         Say "***ERROR INVALID email SMTP configuration! - 'username=' and 'password=' parameters must not be blank"
         return 1
     fi
-    
+
     if [ -z "$FROM_ADDRESS" ] || [ -z "$TO_NAME" ] || [ -z "$TO_ADDRESS" ];then
         echo -en ${cBRED}"\n\t"$ALARMBELL
         Say "***ERROR INVALID email Envelope configuration - 'fromaddress=' and 'toaddress=' parameters must not be blank"
@@ -589,20 +615,36 @@ if [ "$1" == "help" ] || [ "$1" == "-h" ]; then # Show help
   exit 0
 fi
 
+# Strip pathname '/jff/scripts/this_script.sh'
 SNAME="${0##*/}"	# v1.23 SNAME=$(basename $0); SNAME="$(echo $0 | sed 's/.*\///')"; SNAME=$(echo $0| awk -F"/" '{print $NF}')
-THIS="$$"
+
+FIRMWARE=$(echo $(nvram get buildno) | awk 'BEGIN { FS = "." } {printf("%03d%02d",$1,$2)}')
+HARDWARE_MODEL=$(Get_Router_Model)
+# v384.13+ NVRAM variable 'lan_hostname' supersedes 'computer_name'
+[ -n "$(nvram get computer_name)" ] && MYROUTER=$(nvram get computer_name) || MYROUTER=$(nvram get lan_hostname)
+BUILDNO=$(nvram get buildno)
 
 
 if [ "$1" == "status" ] || [ "$1" == "reset" ];then                                                     # v1.17
-    echo -e $cBMAG"\n\tActive VPN Failover monitor processes\n"
+    echo -e $cBMAG"\tActive VPN Failover monitor processes\n"
 
-	LOCKFILE="/tmp/$(basename $0)-flock"					# v1.23
+	LOCKFILE="/tmp/$(basename $0)-flock"			# v1.23
 	FD=171
 	eval exec "$FD>$LOCKFILE"
 	flock -x $FD
-	
-    PIDS="$(pidof $SNAME)"                          # v1.21
-			
+
+	PIDS=
+    PID_LIST="$(pidof sh $SNAME)"                   # v1.24 Include 'sh /jffs/openvpn/VPN_Failover' and '/jffs/openvpn/VPN_Failover'
+	PID_LIST=$(echo $PID_LIST | tr " " "\n" | sort -n | uniq | tr "\n" " ")		# v1.24 Remove duplicates!!!!!????? :-S
+	for PID in $PID_LIST                            # v1.21
+		do
+			[ "$PID" == "$THIS" ] && continue		# v1.23 Ignore this instance!
+			PROCESS=$(ps w | awk -v pattern="${PID}" ' $0 ~ pattern && /VPN_Failover.sh/ {print $0 }' | grep -v awk)	# v1.24
+			[ -z "$PROCESS" ] && continue			# v1.24 Probably another 'sh' requested script?
+			PIDS=$PIDS" "$PID						# Add valid VPN_Failover.sh PID to list
+		done
+
+	# List of PIDs must be valid 'VPN_Failover.sh' instances, so match against VPN Clients
     for VPN_ID in 1 2 3 4 5
         do
             PROCESS=
@@ -610,23 +652,18 @@ if [ "$1" == "status" ] || [ "$1" == "reset" ];then                             
             INFO=
             STAT=
             PID=
-			ORPHAN=1										# v1.23
+			ORPHAN=1								# v1.23
 			VPNFAILOVER="/tmp/vpnclient"$VPN_ID"-VPNFailover"
-            
-            echo -en $cBYEL 
 
+            echo -en $cBYEL
 
-			for PID in $PIDS                               # v1.21
+			for PID in $PIDS                        # v1.21
 				do
-					[ "$PID" == "$THIS" ] && continue		# v1.23 Ignore this instance!
-					VPN_INSTANCE=$(ps w | awk -v pattern="${PID}" '{ if ($1 == pattern) print $8 }')	# v1.23
-					[ -n "$(echo $VPN_INSTANCE | grep "$SNAME")" ] && VPN_INSTANCE=$(ps w | awk -v pattern="${PID}" '{ if ($1 == pattern) print $9 }')
-					if [ "$VPN_ID" != "$VPN_INSTANCE" ];then
-						continue
-					fi
-					
-					PROCESS="$(ps w | awk -v pattern="${PID}" '{ if ($1 == pattern) print $0 }')"		# v1.23
-					[ -z "$PROCESS" ] && PID=   || ORPHAN=                    # v1.23
+					PROCESS=$(ps w | awk -v pattern="${PID}" ' $0 ~ pattern && /VPN_Failover.sh/ {print $0 }' | grep -v awk)	# v1.24
+					VPN_INSTANCE=$(echo "$PROCESS" | awk '{print $7}')
+					[ -n "$(echo $VPN_INSTANCE | grep "$SNAME")" ] && VPN_INSTANCE=$(echo "$PROCESS" | awk ' {print $8}')		# v1.23
+					[ "$VPN_ID" != "$VPN_INSTANCE" ] && continue
+					ORPHAN=                    # v1.23
 
 					if [ -f "$VPNFAILOVER" ];then
 						INFO="$(ls -l "$VPNFAILOVER" 2>/dev/null | sed 's/^.*root//')"
@@ -638,50 +675,48 @@ if [ "$1" == "status" ] || [ "$1" == "reset" ];then                             
 							[ -n "$PROCESS" ] && INFO=$cRED"**Warning Pending self-termination?"
 						fi
 					fi
-					
+
 					[ -n "$PROCESS" ] && { echo -e ${BWHT}$PROCESS; SayT "\t"$PROCESS; }
 					[ -n "$INFO" ] && { echo -e ${cBCYA}$INFO ${COLOUR}$TXT; SayT "\t"$INFO $TXT; }
-					
-
 				done
 
-	
-			if [ "$1" == "reset" ] ;then       # VPN_Failover [reset [vpn_instance]] 
+
+			if [ "$1" == "reset" ] ;then       # VPN_Failover [reset [vpn_instance]]
 				if [ -n "$2" ];then                                 	# v1.21
 					if [ "$VPN_ID" == "$2" ];then                       # v1.20 Reset a specific VPN Client instance
 						SayT "\tVPN Client $VPN_ID monitoring reset"    # v1.20
 						echo -e $cBGRE"\tVPN Client $VPN_ID monitoring ${cBRED}${aREVERSE}terminated${cRESET}$cBGRE (and reset)\n"
-						[ -n "$PID" ] && kill $PID 	
+						[ -n "$PID" ] && kill $PID 2>/dev/null
 						rm $VPNFAILOVER 2>/dev/null
 						ORPHAN=
 					fi
 				else
-					SayT "\tVPN Client $VPN_ID monitoring reset"    
+					SayT "\tVPN Client $VPN_ID monitoring reset"
 					echo -e $cBGRE"\tVPN Client $VPN_ID monitoring ${cBRED}${aREVERSE}terminated${cRESET}$cBGRE (and reset)\n"
-					[ -n "$PID" ] && kill $PID 	
+					[ -n "$PID" ] && kill $PID 2>/dev/null
 					rm $VPNFAILOVER 2>/dev/null
 					ORPHAN=
 				fi
-				
 			fi
-			
-			if [ "$ORPHAN" == "1" ] && [ -f "$VPNFAILOVER" ];then						# v1.23
+
+			if [ "$ORPHAN" == "1" ] && [ -f "$VPNFAILOVER" ];then		# v1.23
 				SayT "***ERROR Orphaned PID file '"$VPNFAILOVER"'"
 				echo -e $cBRED"\t***ERROR Orphaned PID file '"$VPNFAILOVER"'"
 			fi
-			
-			
+
 			echo -en $cRESET
         done
-		
-	
-	flock -u $FD		# Release the semaphore lock		# v1.23
-	
+
+
+	flock -u $FD		# v1.23 Release the semaphore lock
+
     echo -e $cRESET
     exit 0
 fi
 
-MYROUTER=$(nvram get computer_name)
+# v384.13+ NVRAM variable 'lan_hostname' supersedes 'computer_name'
+[ -n "$(nvram get computer_name)" ] && MYROUTER=$(nvram get computer_name) || MYROUTER=$(nvram get lan_hostname)
+
 
 MOUNT="/tmp"
 
@@ -747,33 +782,32 @@ else
   exit 99
 fi
 
-LOCKFILE="/tmp/$(basename $0)-flock"					# v1.23
+LOCKFILE="/tmp/$(basename $0)-flock"			# v1.23
 FD=171
 eval exec "$FD>$LOCKFILE"
 flock -x $FD
-	
+
 # Is there ALREADY a VPN Failover monitor process for this VPN?
 VPNFAILOVER="/tmp/vpnclient"$VPN_ID"-VPNFailover"
-PIDS="$(pidof $SNAME)"									
+PIDS="$(pidof sh $SNAME)"						# v1.24 Include 'sh /jffs/openvpn/VPN_Failover' and '/jffs/openvpn/VPN_Failover'
 
-for PID in $PIDS                                # v1.21
-    do         
+for PID in $PIDS                               	# v1.21
+    do
 		[ "$PID" == "$THIS" ] && continue		# v1.23 Ignore this instance!
-        VPN_INSTANCE=$(ps w | awk -v pattern="${PID}" '{ if ($1 == pattern) print $8 }')	# v1.23
-		[ -n "$(echo $VPN_INSTANCE | grep "$SNAME")" ] && VPN_INSTANCE=$(ps w | awk -v pattern="${PID}" '{ if ($1 == pattern) print $9 }')		# v1.23
-        if [ "$VPN_ID" == "$VPN_INSTANCE" ] || [ -f $VPNFAILOVER ];then 
-			PROCESS="PID=$(ps -w | awk -v pattern="${PID}" '{ if ($1 == pattern) print $0 }')" || PROCESS=  
-			[ -z "$PROCESS" ] && PROCESS="PID file exists! '"$VPNFAILOVER"'"
+		PROCESS=$(ps w | awk -v pattern="${PID}" ' $0 ~ pattern && /VPN_Failover.sh/ {print $0 }' | grep -v awk)	# v1.24
+		[ -z "$PROCESS" ] && continue			# v1.24 Probably another 'sh' requested script?
+        VPN_INSTANCE=$(echo "$PROCESS" | awk '{print $7}')
+		[ -n "$(echo $VPN_INSTANCE | grep "$SNAME")" ] && VPN_INSTANCE=$(echo "$PROCESS" | awk ' {print $8}')		# v1.23
+        if [ "$VPN_ID" == "$VPN_INSTANCE" ];then
             SayT "\t**Warning VPN Client $VPN_ID Failover monitor already running!\n\t\t$PROCESS"
             echo -e $cBRED"\n\n\a\t***ERROR: VPN Client $VPN_ID Failover monitor already running!\n\t\t"${PROCESS}$cRESET
-			flock -u $FD						# Release the semaphore lock		# v1.23
             exit 1
         fi
     done
 
 echo $$ >$VPNFAILOVER
 
-flock -u $FD									# Release the semaphore lock		# v1.23
+flock -u $FD									# v1.23 Release the semaphore lock
 
 #For verbose debugging, uncomment the following two lines, and uncomment the last line of this script
 #set -x
@@ -851,10 +885,10 @@ while [ $# -gt 0 ]; do # Until you run out of parameters . . .
         exit 998
       fi
       CMDINTERVAL=$INTERVAL
-      ;;  
+      ;;
     nocurlrestart) # v1.20 Hmmm, should this only be valid if 'once' specified.
       CMDNOCURLRESTART=$1
-      NOCURLRESTART="NoCURLRstart" 
+      NOCURLRESTART="NoCURLRstart"
       ;;
     force | forcebig | forcesmall)
       # cURL transfer?....optionally requires 'curlrate='/'minrates' specification of MINIMUM acceptable transfer rate(s)
@@ -920,12 +954,12 @@ while [ $# -gt 0 ]; do # Until you run out of parameters . . .
         BLOCKED_PERIODS=$BLOCKEDPERIOD
         CMDNOSWITCH=$BLOCKEDPERIOD
       fi
-      ;; 
+      ;;
     silent)
       ALARMBELL= # No audible console alert for ERRORS - except cmd arg validation
       CMDSILENT=$1
       SayT $CMDSILENT
-      ;; 
+      ;;
     multiconfig) # v.10
       CMDSERVERS=$1
       # Rather than rotate through the 5 VPN clients, use /jffs/configs/VPN_Failover to round-robin Server/port/protocol
@@ -953,21 +987,21 @@ while [ $# -gt 0 ]; do # Until you run out of parameters . . .
         echo -e ${cBRED}$ALARMBELL"\n\t***ERROR Multi-config file '/jffs/configs/VPN_Failover' NOT FOUND\n"$cRESET
         exit 99
       fi
-      ;; 
+      ;;
     once)
       CMDONCE=$1
       ONCE="once" # v1.11
       #SayT $CMDONCE # v1.20
-      ;; 
+      ;;
     pingonly=*)
       PING_LIST="$(echo "$1" | sed -n "s/^.*pingonly=//p" | awk '{print $1}')"
       [ -z "$PING_LIST" ] && PING_LIST="1.1.1.1"
       METHOD=" using PING to Point-to-Point LAN only"
       CMDPINGONLY=$1
-      ;;  
+      ;;
     sendmail)
       CMDSENDMAIL=$1
-      ;; 
+      ;;
     emailcfg=*)                         # Email parameters v1.19
       EMAILCFG="$(echo "$1" | sed -n "s/^.*emailcfg=//p" | awk '{print $1}')"
       if [ -f "$EMAILCFG" ];then
@@ -979,7 +1013,7 @@ while [ $# -gt 0 ]; do # Until you run out of parameters . . .
         FROM_ADDRESS=$(awk 'BEGIN {FS = "="} /^fromaddress=/ {print $2}' $EMAILCFG | tr -d '"')
         TO_ADDRESS=$(awk 'BEGIN {FS = "="} /^toaddress=/ {print $2}' $EMAILCFG | tr -d '"')
         CMDEMAILCFG=$1
-        
+
         CMDSENDMAIL="sendmail"          # Assume implied 'sendmail' request! ;-)
       else
         echo -en ${cBRED}"\n\t"$ALARMBELL
@@ -1152,7 +1186,7 @@ while true; do
 
       [ -n "$(echo "$REASON" | grep -F "SLOW")" ] && STATE_COLOUR=${cRESET}$cWRED       # v1.20
       [ -n "$(echo "$REASON" | grep -F "DOWN")" ] && STATE_COLOUR=$cBRED            # v1.20
-        
+
       # If the VPN Client was taken down because it is SLOW simply restart it?      # v1.08
       if [ -n "$(echo "$REASON" | grep -F "SLOW")" ]; then
         if [ "$DISABLEROUNDROBIN" == "Y" ]; then
@@ -1199,7 +1233,7 @@ while true; do
            SayT "**VPN Client Monitor: Terminating VPN Client" $VPN_ID
 
            echo -e ${cBRED}$ALARMBELL"\t\tTerminating VPN Client" $VPN_ID
-        
+
             # Prevent vpnclientX-route-pre-down from terminating this script
             echo "NOKILL" >$VPNFAILOVER                       # v1.15
             RC=$(service stop_vpnclient${VPN_ID})
@@ -1263,20 +1297,20 @@ while true; do
             #exit 99
             continue
           else
-          
+
             SWITCH_VPN=$NEW_VPN_ID                  # v1.21
-          
+
             if [ -n "$ONCE" ] && [ -n "$NOCURLRESTART" ]; then # v1.20
               SayT "VPN Client Monitor: Monitoring VPN Client" $NEW_VPN_ID "terminated ('nocurlrestart' & 'once')"
               echo -e $cBYEL"\n\t"$(date +"%H:%M:%S")" $VER VPN Client Monitor: Monitoring VPN Client" $NEW_VPN_ID "terminated ('nocurlrestart' & 'once')\n"
               # v1.20 Check if restarted VPN Client will request /jffs/scripts/VPN_Failover.sh - don't delete its PID file
-              if [ -z "$(grep -vE "^#" /jffs/scripts/vpnclient${NEW_VPN_ID}-up | grep -Eo "^/jffs/scripts/VPN_Failover|^sh /jffs/scripts/VPN_Failover" /jffs/scripts/vpnclient${NEW_VPN_ID}-up)" ];then 
-                rm /tmp/vpnclient${NEW_VPN_ID}-VPNFailover 2>/dev/null   # Safe to delete this instance's PID file!    
+              if [ -z "$(grep -vE "^#" /jffs/scripts/vpnclient${NEW_VPN_ID}-up | grep -Eo "^/jffs/scripts/VPN_Failover|^sh /jffs/scripts/VPN_Failover" /jffs/scripts/vpnclient${NEW_VPN_ID}-up)" ];then
+                rm /tmp/vpnclient${NEW_VPN_ID}-VPNFailover 2>/dev/null   # Safe to delete this instance's PID file!
               fi
               echo -e $cRESET
               exit 0
             fi
-    
+
             # Check for external kill switch
            if [ ! -f $VPNFAILOVER ]; then
               Say $VER "VPN Client Monitor: Monitoring VPN Client" $NEW_VPN_ID "terminated ('"$VPNFAILOVER"' not found)" # v1.20
