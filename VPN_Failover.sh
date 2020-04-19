@@ -617,6 +617,7 @@ fi
 
 # Strip pathname '/jff/scripts/this_script.sh'
 SNAME="${0##*/}"	# v1.23 SNAME=$(basename $0); SNAME="$(echo $0 | sed 's/.*\///')"; SNAME=$(echo $0| awk -F"/" '{print $NF}')
+THIS=$$
 
 FIRMWARE=$(echo $(nvram get buildno) | awk 'BEGIN { FS = "." } {printf("%03d%02d",$1,$2)}')
 HARDWARE_MODEL=$(Get_Router_Model)
@@ -659,6 +660,7 @@ if [ "$1" == "status" ] || [ "$1" == "reset" ];then                             
 
 			for PID in $PIDS                        # v1.21
 				do
+					#echo "$(ps w | awk -v pattern="{SNAME}"'! /awk/ && /pattern/ { print $1}')"
 					PROCESS=$(ps w | awk -v pattern="${PID}" ' $0 ~ pattern && /VPN_Failover.sh/ {print $0 }' | grep -v awk)	# v1.24
 					VPN_INSTANCE=$(echo "$PROCESS" | awk '{print $7}')
 					[ -n "$(echo $VPN_INSTANCE | grep "$SNAME")" ] && VPN_INSTANCE=$(echo "$PROCESS" | awk ' {print $8}')		# v1.23
@@ -794,6 +796,7 @@ PIDS="$(pidof sh $SNAME)"						# v1.24 Include 'sh /jffs/openvpn/VPN_Failover' a
 for PID in $PIDS                               	# v1.21
     do
 		[ "$PID" == "$THIS" ] && continue		# v1.23 Ignore this instance!
+		#echo "$(ps w | awk -v pattern="{SNAME}"'! /awk/ && /pattern/ { print $1}')"
 		PROCESS=$(ps w | awk -v pattern="${PID}" ' $0 ~ pattern && /VPN_Failover.sh/ {print $0 }' | grep -v awk)	# v1.24
 		[ -z "$PROCESS" ] && continue			# v1.24 Probably another 'sh' requested script?
         VPN_INSTANCE=$(echo "$PROCESS" | awk '{print $7}')
