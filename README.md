@@ -14,7 +14,7 @@ The easiest method (to implement the script) to monitor a VPN Client connection 
 
 e.g. Every 60 minutes @5 minutes past the hour, check the state of the VPN Client 1
 
-		cru "5 */1 * * *" /jffs/scripts/VPN_Failover.sh  1 once
+		cru a Chk_VPN1 "5 */1 * * * /jffs/scripts/VPN_Failover.sh 1 once"
 			
 However, using a static schedule, isn't very flexible, as suppose the VPN Client is legitimately DOWN, then unless the cru (cron) schedule is stopped, the VPN Client connection will be restored, which may be inappropriate.
 
